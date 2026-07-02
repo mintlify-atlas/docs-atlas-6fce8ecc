@@ -1,0 +1,115 @@
+---
+title: "alb Module: Application Load Balancer Setup"
+sidebarTitle: "alb"
+description: "The alb module creates an internet-facing ALB, HTTP listener on port 80, target group with health checks, and registers both Node.js EC2 instances as targets."
+---
+
+The `alb` module places an Application Load Balancer in front of the two Node.js EC2 instances, distributing HTTP traffic evenly across both application servers. The ALB spans both public subnets across two Availability Zones, providing fault tolerance at the load-balancing layer. Target registration uses a `for_each` over a map of instance IDs, so adding more Node.js instances in the future only requires extending that map.
+
+## Traffic Flow
+
+```
+         Internet
+             │
+   Application Load Balancer
+             │  (HTTP :80 listener)
+     Target Group (HTTP:80)
+      /                  \
+     /                    \
+Node 1 (:80)         Node 2 (:80)
+     │                    │
+Nginx → Node.js      Nginx → Node.js
+```
+
+Requests enter through the ALB's public DNS name, hit the HTTP listener on port 80, and are forwarded to one of the two registered targets. Each target runs Nginx as a reverse proxy in front of the Node.js process.
+
+## Resources Created
+
+| Resource | Terraform name | Description |
+|---|---|---|
+| `aws_lb` | `this` | Internet-facing Application Load Balancer; deletion protection disabled |
+| `aws_lb_target_group` | `this` | HTTP:80 target group with instance targets and `/health` health checks |
+| `aws_lb_listener` | `http` | Listens on port 80 and forwards all traffic to the target group |
+| `aws_lb_target_group_attachment` | `this` | `for_each` over `target_instances` — one attachment per Node.js instance |
+
+## Health Check Configuration
+
+The target group is configured with conservative health check thresholds to avoid unnecessary instance flapping:
+
+| Setting | Value |
+|---|---|
+| Path | `/health` |
+| Protocol | HTTP |
+| Expected status code | `200` |
+| Check interval | 30 seconds |
+| Timeout | 5 seconds |
+| Healthy threshold | 2 consecutive successes |
+| Unhealthy threshold | 2 consecutive failures |
+
+<Note>
+  Your Node.js application must expose a `GET /health` endpoint that returns HTTP 200 for the ALB to mark instances as healthy. An instance that fails two consecutive health checks is removed from rotation automatically.
+</Note>
+
+## Input Variables
+
+<ParamField path="project_name" type="string" required>
+  Used to name the ALB (`<project_name>-alb`) and the target group (`<project_name>-tg`).
+</ParamField>
+
+<ParamField path="vpc_id" type="string" required>
+  The VPC ID in which the target group is created. Sourced from `module.network.vpc_id`.
+</ParamField>
+
+<ParamField path="public_subnet_ids" type="list(string)" required>
+  List of public subnet IDs to attach to the ALB. Must contain subnets from at least two different Availability Zones. Sourced from `module.network.public_subnet_1_id` and `module.network.public_subnet_2_id`.
+</ParamField>
+
+<ParamField path="alb_security_group_id" type="string" required>
+  The ID of the security group that allows HTTP (80) and HTTPS (443) inbound traffic. Sourced from `module.security.alb_security_group_id`.
+</ParamField>
+
+<ParamField path="target_instances" type="map(string)" required>
+  A map of arbitrary keys to EC2 instance IDs to register as targets on port 80. Example: `{ node1 = "i-0abc123", node2 = "i-0def456" }`. Each map entry produces one `aws_lb_target_group_attachment` resource.
+</ParamField>
+
+## Outputs
+
+<ResponseField name="dns_name" type="string">
+  The public DNS hostname of the ALB (e.g. `terraform-mean-alb-1234567890.us-east-1.elb.amazonaws.com`). Use this URL to access your MEAN stack application after deployment.
+</ResponseField>
+
+<ResponseField name="target_group_arn" type="string">
+  The ARN of the target group. Useful if you need to attach additional listeners or configure auto-scaling policies that reference the target group.
+</ResponseField>
+
+<ResponseField name="alb_arn" type="string">
+  The ARN of the Application Load Balancer itself. Can be used to reference the ALB in WAF associations or AWS Shield configurations.
+</ResponseField>
+
+## Module Call
+
+```hcl
+module "alb" {
+  source = "./modules/alb"
+
+  project_name = var.project_name
+
+  vpc_id = module.network.vpc_id
+
+  public_subnet_ids = [
+    module.network.public_subnet_1_id,
+    module.network.public_subnet_2_id
+  ]
+
+  alb_security_group_id = module.security.alb_security_group_id
+
+  target_instances = {
+    node1 = module.node_1.instance_id
+    node2 = module.node_2.instance_id
+  }
+}
+```
+
+<Tip>
+  After `terraform apply`, retrieve the application URL with `terraform output -raw alb_dns_name` (if exposed as a root output) or by navigating to the ALB in the EC2 console. The DNS name is stable for the lifetime of the load balancer.
+</Tip>

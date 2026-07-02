@@ -1,0 +1,154 @@
+---
+title: "Terraform Module Architecture: Six-Module Design"
+sidebarTitle: "Overview"
+description: "Overview of the six reusable Terraform child modules — network, security, ec2-instance, alb, iam, and keypair — and how they compose the full MEAN stack."
+---
+
+The Terraform MEAN stack project is decomposed into six focused child modules, each owning a single infrastructure concern. Rather than managing every resource in a flat `main.tf`, this design keeps each module independently testable, versioned, and replaceable. The root configuration wires the modules together by passing outputs from one as inputs to another — for example, subnet IDs from `network` flow into `ec2-instance`, and security group IDs from `security` are consumed by both `ec2-instance` and `alb`.
+
+## Module Dependency Order
+
+Modules must be created in a specific order because later modules consume outputs from earlier ones:
+
+1. **network** — creates the VPC and subnets; its IDs are required by every other module
+2. **keypair** and **iam** — no upstream dependencies; can be created alongside `network`
+3. **security** — requires `vpc_id` from `network`
+4. **ec2-instance** (×3) — requires subnet IDs from `network`, security group IDs from `security`, key name from `keypair`, and instance profile from `iam`
+5. **alb** — requires VPC ID from `network`, subnet IDs from `network`, security group ID from `security`, and instance IDs from both `ec2-instance` (node_1, node_2)
+
+```
+network ──────────────────────────────────────────┐
+   │                                               │
+   ├──► security ──────────────────────────────────┤
+   │        │                                      │
+   │        ▼                                      ▼
+keypair ──► ec2-instance (node_1, node_2, mongodb) ──► alb
+iam ──────►
+```
+
+## Modules at a Glance
+
+<CardGroup cols={2}>
+  <Card title="network" icon="network-wired" href="/modules/network">
+    Creates the VPC, two public subnets across two AZs, one private subnet, an Internet Gateway, NAT Gateway, Elastic IP, and all route tables.
+  </Card>
+  <Card title="security" icon="shield-halved" href="/modules/security">
+    Defines three chained security groups — ALB, Node.js, and MongoDB — enforcing least-privilege traffic between tiers.
+  </Card>
+  <Card title="ec2-instance" icon="server" href="/modules/ec2-instance">
+    A reusable EC2 module instantiated three times (node_1, node_2, mongodb) with IMDSv2 enforcement, encrypted gp3 storage, and user-data bootstrap.
+  </Card>
+  <Card title="alb" icon="scale-balanced" href="/modules/alb">
+    Provisions an internet-facing Application Load Balancer, HTTP listener, target group with `/health` checks, and registers both Node.js instances.
+  </Card>
+  <Card title="iam" icon="key" href="/modules/iam">
+    Creates an IAM role attached to `AmazonSSMManagedInstanceCore`, enabling SSM Session Manager access to all instances without open SSH ports.
+  </Card>
+  <Card title="keypair" icon="file-lock" href="/modules/keypair">
+    Auto-generates an RSA 4096-bit SSH key pair using the TLS provider, saves the `.pem` file locally at `keys/<project_name>.pem`, and registers the public key with AWS.
+  </Card>
+</CardGroup>
+
+## How Modules Are Called from `main.tf`
+
+The root `main.tf` calls every module and threads outputs between them. Below is the complete abbreviated view:
+
+```hcl
+module "network" {
+  source               = "./modules/network"
+  project_name         = var.project_name
+  environment          = var.environment
+  vpc_cidr             = var.vpc_cidr
+  public_subnet_1_cidr = var.public_subnet_1_cidr
+  public_subnet_2_cidr = var.public_subnet_2_cidr
+  private_subnet_cidr  = var.private_subnet_cidr
+  availability_zone_1  = var.availability_zone_1
+  availability_zone_2  = var.availability_zone_2
+}
+
+module "security" {
+  source          = "./modules/security"
+  project_name    = var.project_name
+  vpc_id          = module.network.vpc_id        # ← from network
+  allowed_ssh_ip  = var.allowed_ssh_ip
+}
+
+module "keypair" {
+  source       = "./modules/keypair"
+  project_name = var.project_name
+}
+
+module "iam" {
+  source       = "./modules/iam"
+  project_name = var.project_name
+}
+
+module "node_1" {
+  source               = "./modules/ec2-instance"
+  name                 = "${var.project_name}-node-1"
+  ami_id               = data.aws_ami.ubuntu.id
+  instance_type        = var.instance_type
+  subnet_id            = module.network.public_subnet_1_id   # ← from network
+  security_group_ids   = [module.security.node_security_group_id]
+  associate_public_ip  = true
+  key_name             = module.keypair.key_name             # ← from keypair
+  iam_instance_profile = module.iam.instance_profile_name   # ← from iam
+  user_data_file       = "${path.root}/userdata/node.sh"
+}
+
+module "node_2" {
+  source               = "./modules/ec2-instance"
+  name                 = "${var.project_name}-node-2"
+  ami_id               = data.aws_ami.ubuntu.id
+  instance_type        = var.instance_type
+  subnet_id            = module.network.public_subnet_2_id   # ← from network
+  security_group_ids   = [module.security.node_security_group_id]
+  associate_public_ip  = true
+  key_name             = module.keypair.key_name
+  iam_instance_profile = module.iam.instance_profile_name
+  user_data_file       = "${path.root}/userdata/node.sh"
+}
+
+module "mongodb" {
+  source               = "./modules/ec2-instance"
+  name                 = "${var.project_name}-mongodb"
+  ami_id               = data.aws_ami.ubuntu.id
+  instance_type        = var.instance_type
+  subnet_id            = module.network.private_subnet_id    # ← private subnet
+  security_group_ids   = [module.security.mongo_security_group_id]
+  associate_public_ip  = false
+  key_name             = module.keypair.key_name
+  iam_instance_profile = module.iam.instance_profile_name
+  user_data_file       = "${path.root}/userdata/mongo.sh"
+}
+
+module "alb" {
+  source                = "./modules/alb"
+  project_name          = var.project_name
+  vpc_id                = module.network.vpc_id
+  public_subnet_ids     = [
+    module.network.public_subnet_1_id,
+    module.network.public_subnet_2_id
+  ]
+  alb_security_group_id = module.security.alb_security_group_id
+  target_instances = {
+    node1 = module.node_1.instance_id    # ← from ec2-instance
+    node2 = module.node_2.instance_id
+  }
+}
+```
+
+## Naming Convention
+
+Every module accepts a `project_name` variable and uses it as a consistent prefix for all resource names and tags. For example, with `project_name = "terraform-mean"`:
+
+| Module     | Example resource name              |
+|------------|------------------------------------|
+| network    | `terraform-mean-vpc`               |
+| security   | `terraform-mean-alb-sg`            |
+| ec2-instance | `terraform-mean-node-1`          |
+| alb        | `terraform-mean-alb`               |
+| iam        | `terraform-mean-ec2-role`          |
+| keypair    | `terraform-mean-key`               |
+
+This makes it straightforward to identify all resources belonging to a deployment in the AWS console, and allows multiple environments to coexist in the same account by using different `project_name` values.

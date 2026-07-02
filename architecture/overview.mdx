@@ -1,0 +1,123 @@
+---
+title: "AWS MEAN Stack Architecture: Multi-Tier Design"
+sidebarTitle: "Overview"
+description: "Explore the three-tier AWS architecture: an ALB frontend, dual Node.js/Nginx app servers across two AZs, and a private MongoDB instance for data persistence."
+---
+
+This project deploys a production-grade MEAN stack on AWS using a classic three-tier architecture: a **web tier** handled by an Application Load Balancer, an **application tier** comprised of two Ubuntu EC2 instances running Node.js behind Nginx, and a **data tier** consisting of a MongoDB server isolated in a private subnet. Every resource is provisioned through Terraform modules, enabling repeatable, version-controlled infrastructure that can be torn down and recreated with a single command.
+
+## Architecture Diagram
+
+```text
+                Internet
+                    │
+          Application Load Balancer
+                    │
+      ┌─────────────┴─────────────┐
+      │                           │
+  EC2 Node 1                 EC2 Node 2
+Ubuntu + Node.js + Nginx   Ubuntu + Node.js + Nginx
+      │                           │
+      └─────────────┬─────────────┘
+                    │
+           EC2 MongoDB (Private)
+                    │
+              NAT Gateway
+                    │
+            Internet Gateway
+```
+
+## Component Breakdown
+
+<CardGroup cols={2}>
+  <Card title="Application Load Balancer" icon="scale-balanced">
+    Internet-facing ALB spanning both public subnets. Listens on HTTP port 80,
+    forwards traffic to a target group containing both Node.js instances, and
+    runs health checks against the `/health` endpoint every 30 seconds.
+  </Card>
+  <Card title="Node.js App Servers (×2)" icon="server">
+    Two Ubuntu 24.04 LTS EC2 instances — one per Availability Zone — each
+    running Node.js 22 with an Express application on port 3000 and Nginx as a
+    reverse proxy on port 80. Deployed via automated user-data scripts.
+  </Card>
+  <Card title="MongoDB Server" icon="database">
+    A single EC2 instance in the private subnet running MongoDB 8.0. It has no
+    public IP address and is reachable only from the Node.js security group on
+    port 27017, preventing any direct internet exposure.
+  </Card>
+  <Card title="VPC & Subnets" icon="network-wired">
+    A dedicated VPC (default CIDR `10.0.0.0/16`) with two public subnets across
+    separate Availability Zones for the app tier, and one private subnet for the
+    database tier. All CIDRs are configurable via Terraform variables.
+  </Card>
+  <Card title="NAT Gateway" icon="arrow-right-arrow-left">
+    Deployed in the first public subnet with an Elastic IP. Allows the MongoDB
+    instance in the private subnet to initiate outbound connections — such as
+    OS updates and package installs — without being reachable from the internet.
+  </Card>
+  <Card title="IAM & Security" icon="shield-halved">
+    Three layered security groups (ALB, Node, MongoDB) enforce least-privilege
+    network access. An IAM role with `AmazonSSMManagedInstanceCore` is attached
+    to every EC2 instance, enabling Systems Manager Session Manager without
+    requiring open SSH ports.
+  </Card>
+</CardGroup>
+
+## Traffic Flow
+
+Requests travel through clearly defined layers from the public internet to the database:
+
+<Steps>
+  <Step title="Internet → ALB">
+    A client sends an HTTP request to the ALB's public DNS name on **port 80**.
+    The ALB listener forwards the request to the `terraform-mean-tg` target group.
+  </Step>
+  <Step title="ALB → Node.js Instances">
+    The target group load-balances across **Node 1** and **Node 2** at **port 80**.
+    Each Node instance runs Nginx, which acts as a reverse proxy and forwards the
+    request internally to the Express application on **port 3000**.
+  </Step>
+  <Step title="Node.js → MongoDB">
+    The Express application connects to the MongoDB server using its **private IP
+    address** on **port 27017**. Because MongoDB sits in a private subnet with no
+    public IP, this connection never traverses the public internet.
+  </Step>
+</Steps>
+
+## High Availability
+
+The application tier is distributed across **two separate AWS Availability Zones** (by default `us-east-1a` and `us-east-1b`), so a single AZ failure leaves the remaining Node.js instance fully operational. The ALB continuously evaluates instance health using the following configuration:
+
+| Parameter            | Value              |
+|----------------------|--------------------|
+| Health check path    | `GET /health`      |
+| Expected status code | `200`              |
+| Check interval       | 30 seconds         |
+| Timeout              | 5 seconds          |
+| Healthy threshold    | 2 consecutive hits |
+| Unhealthy threshold  | 2 consecutive hits |
+
+When an instance fails two consecutive health checks, the ALB stops routing traffic to it automatically. Once the instance recovers and passes two checks, it is reinstated into rotation without any manual intervention.
+
+## Data Flow
+
+The Node.js application connects to MongoDB exclusively over the **private subnet**. The MongoDB security group permits inbound traffic on port 27017 only from the Node.js security group ID — not from any CIDR block — meaning even other resources inside the VPC cannot reach MongoDB unless they carry the Node security group. Outbound traffic from MongoDB flows through the NAT Gateway for package management and OS updates, but no inbound path from the internet exists.
+
+<Note>
+  All three EC2 instances are provisioned with encrypted **gp3** root volumes
+  (20 GB default) and IMDSv2 enforced, ensuring instance metadata cannot be
+  accessed without a session-oriented token.
+</Note>
+
+## Related Pages
+
+<CardGroup cols={2}>
+  <Card title="Networking" icon="diagram-project" href="/architecture/networking">
+    VPC layout, subnet CIDRs, Internet Gateway, NAT Gateway, and route table
+    configuration in detail.
+  </Card>
+  <Card title="Security" icon="lock" href="/architecture/security">
+    Security group rules, IMDSv2 enforcement, EBS encryption, and IAM role
+    configuration for every tier.
+  </Card>
+</CardGroup>

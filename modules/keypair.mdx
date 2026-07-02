@@ -1,0 +1,91 @@
+---
+title: "keypair Module: Auto-Generated SSH Key Pair"
+sidebarTitle: "keypair"
+description: "The keypair module generates an RSA 4096-bit key pair using the TLS provider, saves the private key locally as a .pem file, and registers the public key with AWS."
+---
+
+The `keypair` module removes the manual step of generating an SSH key pair before running `terraform apply`. On the first apply, Terraform uses the `hashicorp/tls` provider to generate a 4096-bit RSA key entirely in memory, writes the private key to `keys/<project_name>.pem` with restrictive `0400` permissions, and uploads the corresponding public key to AWS as a named Key Pair. The resulting key pair name is passed to all three EC2 instances so they are immediately accessible over SSH without any out-of-band setup.
+
+## How It Works
+
+The module uses three resources in sequence:
+
+| Resource | Provider | Description |
+|---|---|---|
+| `tls_private_key.this` | `hashicorp/tls` | Generates a 4096-bit RSA key in memory during the plan/apply phase |
+| `local_file.private_key` | `hashicorp/local` | Writes the private key PEM to `keys/<project_name>.pem` with `0400` file permissions |
+| `aws_key_pair.this` | `hashicorp/aws` | Uploads the public key in OpenSSH format to AWS, creating a Key Pair named `<project_name>-key` |
+
+```hcl
+resource "tls_private_key" "this" {
+  algorithm = "RSA"
+  rsa_bits  = 4096
+}
+
+resource "local_file" "private_key" {
+  filename        = "${path.root}/keys/${var.project_name}.pem"
+  content         = tls_private_key.this.private_key_pem
+  file_permission = "0400"
+}
+
+resource "aws_key_pair" "this" {
+  key_name   = "${var.project_name}-key"
+  public_key = tls_private_key.this.public_key_openssh
+}
+```
+
+## Key File Location
+
+The private key is written to `keys/<project_name>.pem` relative to the Terraform root module directory. For example, with `project_name = "terraform-mean"` the file is saved at:
+
+```
+keys/terraform-mean.pem
+```
+
+The `keys/` directory is gitignored to prevent accidental key exposure in version control.
+
+## Input Variables
+
+<ParamField path="project_name" type="string" required>
+  Used to name the AWS Key Pair (`<project_name>-key`) and the local private key file (`keys/<project_name>.pem`).
+</ParamField>
+
+## Outputs
+
+<ResponseField name="key_name" type="string">
+  The name of the AWS Key Pair (e.g. `terraform-mean-key`). Referenced by all three `ec2-instance` module calls via the `key_name` variable.
+</ResponseField>
+
+<ResponseField name="private_key_path" type="string">
+  The local filesystem path to the generated `.pem` file (e.g. `./keys/terraform-mean.pem`). Use this path with `ssh -i` to connect to public instances.
+</ResponseField>
+
+## Module Call
+
+```hcl
+module "keypair" {
+  source = "./modules/keypair"
+
+  project_name = var.project_name
+}
+```
+
+## Using the Key
+
+After `terraform apply` completes, retrieve the key path and SSH into a Node.js instance:
+
+```bash
+# Get the local path to the private key
+terraform output -raw private_key_path
+
+# SSH to a public Node.js instance using the generated key
+ssh -i keys/terraform-mean.pem ubuntu@<NODE_PUBLIC_IP>
+```
+
+<Note>
+  SSH access to instances requires that your IP is included in `var.allowed_ssh_ip` (set in the `security` module). The MongoDB instance has no public IP and cannot be reached directly over SSH — use AWS SSM Session Manager instead.
+</Note>
+
+<Warning>
+  The private key material is stored in plain text inside the Terraform state file. Use a secure remote backend such as S3 with server-side encryption and a DynamoDB lock table. Restrict access to the state file using IAM policies and ensure the `keys/` directory is listed in `.gitignore` to prevent committing the private key to source control.
+</Warning>

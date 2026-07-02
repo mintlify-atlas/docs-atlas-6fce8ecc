@@ -1,0 +1,86 @@
+---
+title: "security Module: Three-Layer Security Groups"
+sidebarTitle: "security"
+description: "The security module creates three chained security groups for the ALB, Node.js instances, and MongoDB — enforcing least-privilege network access between tiers."
+---
+
+The `security` module implements network segmentation for the MEAN stack through three security groups that reference each other as sources. Traffic flows strictly top-to-bottom: the internet reaches the ALB, the ALB reaches Node.js instances, and Node.js instances are the only permitted source for MongoDB connections. No direct path exists from the internet to the application or database tier.
+
+## Security Groups
+
+### ALB Security Group — `<project_name>-alb-sg`
+
+The load balancer is the only public-facing resource and accepts HTTP and HTTPS traffic from anywhere.
+
+| Direction | Protocol | Port | Source | Description |
+|---|---|---|---|---|
+| Inbound | TCP | 80 | `0.0.0.0/0` | HTTP from the internet |
+| Inbound | TCP | 443 | `0.0.0.0/0` | HTTPS from the internet |
+| Outbound | All | All | `0.0.0.0/0` | Unrestricted egress |
+
+### Node Security Group — `<project_name>-node-sg`
+
+Node.js application instances accept HTTP traffic only from the ALB security group (not from any IP range), and SSH from a single configurable CIDR.
+
+| Direction | Protocol | Port | Source | Description |
+|---|---|---|---|---|
+| Inbound | TCP | 80 | ALB security group ID | HTTP forwarded from the ALB |
+| Inbound | TCP | 22 | `var.allowed_ssh_ip` | SSH from your specified CIDR |
+| Outbound | All | All | `0.0.0.0/0` | Unrestricted egress |
+
+<Info>
+  The HTTP inbound rule uses `security_groups` (a security group reference) rather than `cidr_blocks`. This means traffic on port 80 is accepted only from resources attached to the ALB security group — direct IP access to port 80 is blocked even if the instance has a public IP.
+</Info>
+
+### MongoDB Security Group — `<project_name>-mongo-sg`
+
+The database tier permits only the MongoDB wire protocol and only from the Node security group. There is no SSH inbound rule — use AWS Systems Manager Session Manager to access the instance (see the [iam module](/modules/iam)).
+
+| Direction | Protocol | Port | Source | Description |
+|---|---|---|---|---|
+| Inbound | TCP | 27017 | Node security group ID | MongoDB from Node.js tier only |
+| Outbound | All | All | `0.0.0.0/0` | Unrestricted egress |
+
+## Input Variables
+
+<ParamField path="project_name" type="string" required>
+  Prefix for all security group `name` and `Name` tag values (e.g. `terraform-mean` produces `terraform-mean-alb-sg`).
+</ParamField>
+
+<ParamField path="vpc_id" type="string" required>
+  The ID of the VPC in which all three security groups are created. Sourced from `module.network.vpc_id`.
+</ParamField>
+
+<ParamField path="allowed_ssh_ip" type="string" required>
+  A CIDR block permitted to reach Node.js instances on port 22 (e.g. `203.0.113.42/32`). This value is used in the Node security group's SSH inbound rule.
+</ParamField>
+
+## Outputs
+
+<ResponseField name="alb_security_group_id" type="string">
+  The ID of the ALB security group. Passed to the `alb` module via `alb_security_group_id`.
+</ResponseField>
+
+<ResponseField name="node_security_group_id" type="string">
+  The ID of the Node security group. Passed to the `node_1` and `node_2` EC2 module instances.
+</ResponseField>
+
+<ResponseField name="mongo_security_group_id" type="string">
+  The ID of the MongoDB security group. Passed to the `mongodb` EC2 module instance.
+</ResponseField>
+
+## Module Call
+
+```hcl
+module "security" {
+  source = "./modules/security"
+
+  project_name   = var.project_name
+  vpc_id         = module.network.vpc_id
+  allowed_ssh_ip = var.allowed_ssh_ip
+}
+```
+
+<Warning>
+  Always set `allowed_ssh_ip` to your specific public IP with a `/32` suffix (e.g. `203.0.113.42/32`). Setting it to `0.0.0.0/0` exposes SSH on all Node.js instances to the entire internet and creates a critical security risk.
+</Warning>

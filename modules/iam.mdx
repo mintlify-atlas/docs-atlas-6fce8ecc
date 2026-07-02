@@ -1,0 +1,72 @@
+---
+title: "iam Module: EC2 Role and Instance Profile"
+sidebarTitle: "iam"
+description: "The iam module creates an IAM role with the AmazonSSMManagedInstanceCore policy, allowing EC2 instances to use AWS Systems Manager without opening SSH ports."
+---
+
+The `iam` module provisions the IAM resources required for AWS Systems Manager (SSM) access across all three EC2 instances — both public Node.js servers and the private MongoDB instance. By attaching the `AmazonSSMManagedInstanceCore` managed policy, every instance can register with the SSM service at boot, eliminating the need for a bastion host or open SSH ports to reach the private MongoDB instance. The resulting instance profile is passed to the `ec2-instance` module, which attaches it to each instance at launch.
+
+## Resources Created
+
+| Resource | Terraform name | Description |
+|---|---|---|
+| `aws_iam_role` | `ec2` | IAM role named `<project_name>-ec2-role` with an EC2 service trust policy |
+| `aws_iam_role_policy_attachment` | `ssm` | Attaches the `AmazonSSMManagedInstanceCore` AWS-managed policy to the role |
+| `aws_iam_instance_profile` | `this` | Instance profile named `<project_name>-instance-profile` wrapping the role |
+
+## Trust Policy
+
+The IAM role uses the following trust policy, which allows the EC2 service to assume the role on behalf of any instance the profile is attached to:
+
+```json
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Action": "sts:AssumeRole",
+      "Effect": "Allow",
+      "Principal": {
+        "Service": "ec2.amazonaws.com"
+      }
+    }
+  ]
+}
+```
+
+## What `AmazonSSMManagedInstanceCore` Enables
+
+Attaching this managed policy grants the following capabilities to every EC2 instance in the stack:
+
+| Capability | Description |
+|---|---|
+| SSM Agent registration | Instances register with the SSM service on startup and appear in the Systems Manager Fleet Manager console |
+| Session Manager shell access | Interactive shell sessions via `aws ssm start-session` — no SSH or open ports required |
+| Run Command | Execute shell commands on one or more instances remotely from the AWS console or CLI |
+| Parameter Store (read) | Instances can read SSM Parameter Store values (useful for injecting secrets at runtime) |
+| Patch Manager | Instances can be scanned and patched through AWS Systems Manager Patch Manager |
+
+## Input Variables
+
+<ParamField path="project_name" type="string" required>
+  Prefix for the IAM role name (`<project_name>-ec2-role`) and instance profile name (`<project_name>-instance-profile`).
+</ParamField>
+
+## Outputs
+
+<ResponseField name="instance_profile_name" type="string">
+  The name of the IAM instance profile. Consumed by the `ec2-instance` module via the `iam_instance_profile` variable in all three instance calls.
+</ResponseField>
+
+## Module Call
+
+```hcl
+module "iam" {
+  source = "./modules/iam"
+
+  project_name = var.project_name
+}
+```
+
+<Tip>
+  Use `aws ssm start-session --target <instance-id>` to open an interactive shell on any instance — including the private MongoDB server — without needing SSH keys or open port 22. Combine with `--region` if your default region differs from the deployment region.
+</Tip>

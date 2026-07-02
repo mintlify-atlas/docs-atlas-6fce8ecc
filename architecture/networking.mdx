@@ -1,0 +1,159 @@
+---
+title: "VPC Networking Design for MEAN Stack on AWS"
+sidebarTitle: "Networking"
+description: "How the VPC, subnets, Internet Gateway, NAT Gateway, and route tables are structured to provide public app access and private database isolation."
+---
+
+The networking layer is the foundation of this architecture's security and availability story. A single VPC encapsulates all resources, with public subnets spread across two Availability Zones to host the application tier and a private subnet in the first AZ to isolate MongoDB from the internet. Terraform's network module provisions every resource — VPC, subnets, gateways, and route tables — as a cohesive unit, and all resource names are derived from a configurable `project_name` variable to avoid collisions across environments.
+
+## VPC Configuration
+
+The VPC is created with DNS resolution and DNS hostname support both enabled. This is required for EC2 instances to receive resolvable hostnames and for AWS services that rely on DNS (such as Systems Manager endpoints) to function correctly within the VPC.
+
+| Setting               | Value                        |
+|-----------------------|------------------------------|
+| CIDR block            | `10.0.0.0/16` (configurable) |
+| DNS support           | Enabled                      |
+| DNS hostnames         | Enabled                      |
+| Terraform resource    | `aws_vpc.this`               |
+| Name tag              | `<project_name>-vpc`         |
+
+## Subnet Layout
+
+Three subnets divide the address space into public and private tiers. Both public subnets set `map_public_ip_on_launch = true` so that Node.js instances automatically receive a public IP on launch.
+
+| Name               | Default CIDR   | AZ          | Public/Private | Purpose                       |
+|--------------------|----------------|-------------|----------------|-------------------------------|
+| `public-subnet-a`  | `10.0.1.0/24`  | `us-east-1a` | Public        | Node.js Server 1 + ALB        |
+| `public-subnet-b`  | `10.0.2.0/24`  | `us-east-1b` | Public        | Node.js Server 2 + ALB        |
+| `private-subnet`   | `10.0.3.0/24`  | `us-east-1a` | Private       | MongoDB                       |
+
+<Info>
+  All CIDR blocks (`vpc_cidr`, `public_subnet_1_cidr`, `public_subnet_2_cidr`,
+  `private_subnet_cidr`) and both AZ names (`availability_zone_1`,
+  `availability_zone_2`) are exposed as Terraform input variables, making it
+  straightforward to adapt the layout to any AWS region or address plan.
+</Info>
+
+## Internet Gateway
+
+An Internet Gateway is attached to the VPC and referenced by the public route table. It provides the path that lets ALB and Node.js instances send and receive traffic from the public internet.
+
+| Setting            | Value                     |
+|--------------------|---------------------------|
+| Attached to        | `<project_name>-vpc`      |
+| Name tag           | `<project_name>-igw`      |
+| Terraform resource | `aws_internet_gateway.this` |
+
+## NAT Gateway
+
+The NAT Gateway is placed in `public-subnet-a` and is allocated a static Elastic IP. It gives the MongoDB instance — which lives in the private subnet with no public IP — the ability to initiate outbound connections to the internet for package installation and OS updates, while blocking all unsolicited inbound connections.
+
+| Setting            | Value                       |
+|--------------------|-----------------------------|
+| Subnet             | `public-subnet-a`           |
+| Elastic IP         | `<project_name>-nat-eip`    |
+| Name tag           | `<project_name>-nat`        |
+| Terraform resource | `aws_nat_gateway.this`      |
+| Depends on         | `aws_internet_gateway.this` |
+
+The `depends_on` relationship in the Terraform source ensures the Internet Gateway is fully attached before the NAT Gateway is created — a common ordering requirement in AWS.
+
+## Route Tables
+
+Two route tables govern traffic leaving each subnet tier:
+
+<Tabs>
+  <Tab title="Public Route Table">
+    Associated with `public-subnet-a` and `public-subnet-b`. Sends all
+    non-local traffic to the Internet Gateway.
+
+    | Destination   | Target                    |
+    |---------------|---------------------------|
+    | `10.0.0.0/16` | local (implicit)          |
+    | `0.0.0.0/0`   | Internet Gateway (`igw-*`) |
+
+    Name tag: `<project_name>-public-rt`
+  </Tab>
+  <Tab title="Private Route Table">
+    Associated with `private-subnet` only. Sends all non-local traffic through
+    the NAT Gateway so the MongoDB instance can reach the internet without
+    receiving inbound connections.
+
+    | Destination   | Target                  |
+    |---------------|-------------------------|
+    | `10.0.0.0/16` | local (implicit)        |
+    | `0.0.0.0/0`   | NAT Gateway (`nat-*`)   |
+
+    Name tag: `<project_name>-private-rt`
+  </Tab>
+</Tabs>
+
+## Resource Naming Convention
+
+Every resource in the network module follows the pattern `<project_name>-<resource>`. With the default project name `terraform-mean`, the resulting AWS resource names are:
+
+| Resource           | AWS Name                        |
+|--------------------|---------------------------------|
+| VPC                | `terraform-mean-vpc`            |
+| Internet Gateway   | `terraform-mean-igw`            |
+| Public Subnet A    | `terraform-mean-public-subnet-a` |
+| Public Subnet B    | `terraform-mean-public-subnet-b` |
+| Private Subnet     | `terraform-mean-private-subnet` |
+| Elastic IP         | `terraform-mean-nat-eip`        |
+| NAT Gateway        | `terraform-mean-nat`            |
+| Public Route Table | `terraform-mean-public-rt`      |
+| Private Route Table| `terraform-mean-private-rt`     |
+
+## HCL Reference
+
+The following excerpts are taken directly from `modules/network/main.tf` and show how the VPC and NAT Gateway are declared:
+
+```hcl
+resource "aws_vpc" "this" {
+
+  cidr_block           = var.vpc_cidr
+  enable_dns_support   = true
+  enable_dns_hostnames = true
+
+  tags = {
+    Name = "${var.project_name}-vpc"
+  }
+
+}
+```
+
+```hcl
+resource "aws_eip" "nat" {
+
+  domain = "vpc"
+
+  tags = {
+    Name = "${var.project_name}-nat-eip"
+  }
+
+}
+
+resource "aws_nat_gateway" "this" {
+
+  allocation_id = aws_eip.nat.id
+
+  subnet_id = aws_subnet.public_1.id
+
+  depends_on = [
+    aws_internet_gateway.this
+  ]
+
+  tags = {
+    Name = "${var.project_name}-nat"
+  }
+
+}
+```
+
+<Tip>
+  The network module exports `vpc_id`, `public_subnet_1_id`,
+  `public_subnet_2_id`, `private_subnet_id`, and `nat_gateway_public_ip` as
+  outputs, which are consumed by the security, EC2, and ALB modules — keeping
+  inter-module coupling explicit and traceable.
+</Tip>

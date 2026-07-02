@@ -1,0 +1,146 @@
+---
+title: "Configure Variables for Your MEAN Stack Deployment"
+sidebarTitle: "Configuration"
+description: "Set all required Terraform variables including project name, AWS region, VPC CIDRs, availability zones, instance type, and SSH access IP before deploying."
+---
+
+Before running `terraform init` or `terraform apply`, you need to populate two configuration files: `backend.hcl`, which tells Terraform where to store its remote state, and `terraform.tfvars`, which supplies values for every input variable the project declares. Neither file is committed to source control — both are listed in `.gitignore` to keep credentials and environment-specific settings out of your repository history.
+
+## backend.hcl
+
+The `backend.hcl` file provides the S3 backend configuration that is passed to `terraform init` via the `-backend-config` flag. Keeping it separate from `backend.tf` means you can maintain different state locations for different environments without modifying tracked Terraform files.
+
+Create `backend.hcl` in the project root with the following content, substituting your own bucket name and preferred state key path:
+
+```hcl
+bucket  = "my-terraform-state-bucket"
+key     = "terraform-mean/terraform.tfstate"
+region  = "us-east-1"
+encrypt = true
+```
+
+| Field | Purpose |
+|---|---|
+| `bucket` | Name of the S3 bucket you created in the prerequisites step |
+| `key` | Object path within the bucket for the state file |
+| `region` | AWS region where the bucket resides |
+| `encrypt` | Enables server-side encryption of the state file at rest |
+
+## terraform.tfvars
+
+The `terraform.tfvars` file supplies concrete values for all input variables declared in `variables.tf`. Start from the provided example:
+
+```bash
+cp terraform.tfvars.example terraform.tfvars
+```
+
+Then open `terraform.tfvars` in your editor and fill in every value. The example file ships with sensible defaults for networking and instance sizing — the only value you **must** change before deploying is `allowed_ssh_ip`.
+
+<Warning>
+  Never set `allowed_ssh_ip` to `0.0.0.0/0`. Doing so opens SSH port 22 to the entire internet. Always restrict access to your specific public IP address in `/32` notation. Run `curl ifconfig.me` to find your current public IP.
+</Warning>
+
+## Variable Reference
+
+All twelve input variables are required — there are no defaults defined in `variables.tf`, so every field must be present in your `terraform.tfvars`.
+
+### Project Identity
+
+<ParamField path="project_name" type="string" required>
+  Project name used as a prefix for all AWS resource names and tags (e.g. `terraform-mean`). This value flows into `locals.tf` to build names like `terraform-mean-vpc`, `terraform-mean-alb`, etc.
+</ParamField>
+
+<ParamField path="environment" type="string" required>
+  Deployment environment label applied as a tag to every resource. Accepted values: `lab`, `dev`, `qa`, `prod`.
+</ParamField>
+
+### AWS Region
+
+<ParamField path="aws_region" type="string" required>
+  AWS region in which all infrastructure will be provisioned (e.g. `us-east-1`). Must match the region of your S3 state bucket if you want to keep everything co-located.
+</ParamField>
+
+### Networking
+
+<ParamField path="vpc_cidr" type="string" required>
+  CIDR block for the VPC (e.g. `10.0.0.0/16`). All subnet CIDRs must fall within this range.
+</ParamField>
+
+<ParamField path="public_subnet_1_cidr" type="string" required>
+  CIDR block for Public Subnet A, which hosts Node.js Server 1 and the first ALB node (e.g. `10.0.1.0/24`).
+</ParamField>
+
+<ParamField path="public_subnet_2_cidr" type="string" required>
+  CIDR block for Public Subnet B, which hosts Node.js Server 2 and the second ALB node (e.g. `10.0.2.0/24`).
+</ParamField>
+
+<ParamField path="private_subnet_cidr" type="string" required>
+  CIDR block for the Private Subnet, which hosts the MongoDB instance and routes outbound traffic through the NAT Gateway (e.g. `10.0.3.0/24`).
+</ParamField>
+
+<ParamField path="availability_zone_1" type="string" required>
+  Availability Zone for Public Subnet A (e.g. `us-east-1a`). Must be a valid AZ within `aws_region`.
+</ParamField>
+
+<ParamField path="availability_zone_2" type="string" required>
+  Availability Zone for Public Subnet B (e.g. `us-east-1b`). Should differ from `availability_zone_1` to achieve multi-AZ high availability.
+</ParamField>
+
+### Compute
+
+<ParamField path="instance_type" type="string" required>
+  EC2 instance type for all three servers — both Node.js instances and the MongoDB instance (e.g. `t2.micro` for AWS Free Tier eligibility).
+</ParamField>
+
+<ParamField path="node_instance_count" type="number" required>
+  Number of Node.js application servers to provision. Default in the example is `2`, which matches the two public subnets and provides basic load-balanced redundancy.
+</ParamField>
+
+### Access Control
+
+<ParamField path="allowed_ssh_ip" type="string" required>
+  The single public IP address (in CIDR `/32` notation) that is permitted to connect to EC2 instances over SSH port 22 (e.g. `203.0.113.42/32`). Run `curl ifconfig.me` to find your public IP.
+</ParamField>
+
+## Complete Example File
+
+The following is the complete `terraform.tfvars.example` file shipped with the project. Copy it to `terraform.tfvars` and replace `YOUR_IP/32` with your actual public IP before deploying:
+
+```hcl
+project_name        = "terraform-mean"
+environment         = "lab"
+aws_region          = "us-east-1"
+
+vpc_cidr            = "10.0.0.0/16"
+public_subnet_1_cidr  = "10.0.1.0/24"
+public_subnet_2_cidr  = "10.0.2.0/24"
+private_subnet_cidr   = "10.0.3.0/24"
+
+availability_zone_1 = "us-east-1a"
+availability_zone_2 = "us-east-1b"
+
+instance_type       = "t2.micro"
+node_instance_count = 2
+
+allowed_ssh_ip = "YOUR_IP/32" # Run: curl ifconfig.me
+```
+
+## Common Resource Tags
+
+The `locals.tf` file defines a `common_tags` map that is applied to every AWS resource via the provider's `default_tags` block in `provider.tf`. You do not need to add tags manually to individual resources.
+
+```hcl
+common_tags = {
+  Project     = var.project_name   # e.g. "terraform-mean"
+  Environment = var.environment    # e.g. "lab"
+  ManagedBy   = "Terraform"
+}
+```
+
+These tags make it straightforward to filter and audit costs in AWS Cost Explorer or find all resources belonging to the project in the AWS console.
+
+<Tip>
+  With both configuration files in place, you are ready to initialize, plan, and apply. Head to the deploy step next.
+
+  [Deploy the Infrastructure →](/deployment/deploy)
+</Tip>

@@ -1,0 +1,129 @@
+---
+title: "ec2-instance Module: Reusable EC2 Configuration"
+sidebarTitle: "ec2-instance"
+description: "A reusable EC2 module used three times — for node-1, node-2, and mongodb — configuring IMDSv2, encrypted gp3 storage, user-data bootstrap, and IAM profiles."
+---
+
+The `ec2-instance` module is a general-purpose building block that the root configuration instantiates three times — once for each of the two Node.js servers (`node_1`, `node_2`) and once for the MongoDB database (`mongodb`). Each call passes different subnet IDs, security groups, public IP settings, and user-data scripts, producing three distinct instances from a single module definition. Shared concerns — IMDSv2 enforcement, encrypted storage, IAM profile attachment — are configured once inside the module and apply uniformly to all three instances.
+
+## EC2 Resource Configuration
+
+The `aws_instance` resource inside this module is configured with several security and operational defaults:
+
+- **AMI**: Sourced from `data.aws_ami.ubuntu`, which resolves to the latest Ubuntu 24.04 LTS (`ubuntu/images/hvm-ssd-gp3/ubuntu-noble-24.04-amd64-server-*`) owned by Canonical.
+- **User data**: Loaded from `file(var.user_data_file)`. The `user_data_replace_on_change = true` flag forces EC2 to replace the instance (not just re-run user-data) whenever the bootstrap script changes, ensuring the instance always reflects the current script.
+- **IMDSv2 enforced**: `metadata_options` sets `http_tokens = "required"`, blocking all requests to the Instance Metadata Service that do not use session-oriented IMDSv2. This prevents SSRF attacks from leaking instance credentials.
+- **Root volume**: `gp3` type, 20 GB default, `encrypted = true`. The gp3 baseline of 3,000 IOPS is included at no extra cost.
+- **Monitoring**: `monitoring = false` — basic CloudWatch metrics only; detailed (1-minute) monitoring is not enabled.
+
+## Input Variables
+
+<ParamField path="name" type="string" required>
+  Value for the instance's `Name` tag (e.g. `terraform-mean-node-1`). Constructed in the root module as `"${var.project_name}-node-1"`.
+</ParamField>
+
+<ParamField path="ami_id" type="string" required>
+  The AMI ID to launch. In the root module this is always `data.aws_ami.ubuntu.id`, resolving to the latest Ubuntu 24.04 LTS AMI in the target region.
+</ParamField>
+
+<ParamField path="instance_type" type="string" required>
+  EC2 instance type (e.g. `t3.micro`, `t3.small`). The same `var.instance_type` from the root is used for all three instances.
+</ParamField>
+
+<ParamField path="subnet_id" type="string" required>
+  The subnet in which to launch the instance. `node_1` uses `public_subnet_1_id`, `node_2` uses `public_subnet_2_id`, and `mongodb` uses `private_subnet_id`.
+</ParamField>
+
+<ParamField path="security_group_ids" type="list(string)" required>
+  List of security group IDs to attach to the instance. Node instances receive `[node_security_group_id]`; the MongoDB instance receives `[mongo_security_group_id]`.
+</ParamField>
+
+<ParamField path="associate_public_ip" type="bool" required>
+  Whether to assign a public IP address. Set to `true` for `node_1` and `node_2` (public subnets); set to `false` for `mongodb` (private subnet).
+</ParamField>
+
+<ParamField path="key_name" type="string" required>
+  The name of the EC2 Key Pair to associate with the instance. Sourced from `module.keypair.key_name` in the root module.
+</ParamField>
+
+<ParamField path="iam_instance_profile" type="string" required>
+  The name of the IAM instance profile to attach. Sourced from `module.iam.instance_profile_name`, granting all instances SSM access.
+</ParamField>
+
+<ParamField path="user_data_file" type="string" required>
+  Filesystem path to the shell script run on first boot (e.g. `${path.root}/userdata/node.sh` or `${path.root}/userdata/mongo.sh`). The script content is read with Terraform's `file()` function.
+</ParamField>
+
+<ParamField path="volume_size" type="number" default="20">
+  Size of the root EBS volume in gigabytes. Defaults to `20`. The volume type is always `gp3` and encryption is always enabled regardless of this value.
+</ParamField>
+
+## Outputs
+
+<ResponseField name="instance_id" type="string">
+  The EC2 instance ID (e.g. `i-0abc123def456`). The `alb` module consumes `node_1` and `node_2` instance IDs via the `target_instances` map.
+</ResponseField>
+
+<ResponseField name="private_ip" type="string">
+  The private IPv4 address of the instance. Available for all three instances regardless of subnet type.
+</ResponseField>
+
+<ResponseField name="public_ip" type="string">
+  The public IPv4 address of the instance. Returns a valid address for `node_1` and `node_2`; returns `null` for `mongodb` since `associate_public_ip = false`.
+</ResponseField>
+
+<ResponseField name="private_dns" type="string">
+  The private DNS hostname (e.g. `ip-10-0-1-42.ec2.internal`). Useful for service-to-service communication inside the VPC, such as Node.js connecting to MongoDB.
+</ResponseField>
+
+## Three Module Calls Compared
+
+The root `main.tf` invokes `ec2-instance` three times. The key differences between calls are highlighted in comments:
+
+```hcl
+# ── node_1: public subnet A, public IP, node bootstrap ───────────────────────
+module "node_1" {
+  source               = "./modules/ec2-instance"
+  name                 = "${var.project_name}-node-1"
+  ami_id               = data.aws_ami.ubuntu.id
+  instance_type        = var.instance_type
+  subnet_id            = module.network.public_subnet_1_id   # public AZ1
+  security_group_ids   = [module.security.node_security_group_id]
+  associate_public_ip  = true                                # public IP
+  key_name             = module.keypair.key_name
+  iam_instance_profile = module.iam.instance_profile_name
+  user_data_file       = "${path.root}/userdata/node.sh"     # node script
+}
+
+# ── node_2: public subnet B, public IP, node bootstrap ───────────────────────
+module "node_2" {
+  source               = "./modules/ec2-instance"
+  name                 = "${var.project_name}-node-2"
+  ami_id               = data.aws_ami.ubuntu.id
+  instance_type        = var.instance_type
+  subnet_id            = module.network.public_subnet_2_id   # public AZ2
+  security_group_ids   = [module.security.node_security_group_id]
+  associate_public_ip  = true                                # public IP
+  key_name             = module.keypair.key_name
+  iam_instance_profile = module.iam.instance_profile_name
+  user_data_file       = "${path.root}/userdata/node.sh"     # node script
+}
+
+# ── mongodb: private subnet, no public IP, mongo bootstrap ───────────────────
+module "mongodb" {
+  source               = "./modules/ec2-instance"
+  name                 = "${var.project_name}-mongodb"
+  ami_id               = data.aws_ami.ubuntu.id
+  instance_type        = var.instance_type
+  subnet_id            = module.network.private_subnet_id    # private AZ1
+  security_group_ids   = [module.security.mongo_security_group_id]
+  associate_public_ip  = false                               # no public IP
+  key_name             = module.keypair.key_name
+  iam_instance_profile = module.iam.instance_profile_name
+  user_data_file       = "${path.root}/userdata/mongo.sh"    # mongo script
+}
+```
+
+<Tip>
+  To increase the MongoDB volume to 50 GB without affecting the Node.js instances, add `volume_size = 50` only to the `mongodb` module call. The default of 20 GB continues to apply to `node_1` and `node_2`.
+</Tip>

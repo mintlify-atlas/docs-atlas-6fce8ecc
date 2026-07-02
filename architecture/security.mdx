@@ -1,0 +1,193 @@
+---
+title: "Security Groups and IAM for MEAN Stack AWS"
+sidebarTitle: "Security"
+description: "Three-layer security group design isolating ALB, Node.js, and MongoDB tiers, plus IAM roles and IMDSv2 enforcement for hardened EC2 instances."
+---
+
+Security in this stack is built on a defense-in-depth model: rather than relying on a single perimeter, three separate security groups enforce the principle of least privilege at every tier. The ALB security group accepts public web traffic, the Node security group accepts traffic only from the ALB, and the MongoDB security group accepts database connections only from the Node security group. No direct path from the internet to MongoDB exists at the network layer. On top of that, every EC2 instance is hardened with IMDSv2 enforcement, encrypted EBS volumes, and an IAM role that enables AWS Systems Manager access without opening SSH to the world.
+
+## Security Group Architecture
+
+```text
+                Internet
+                    │
+            ALB Security Group
+            80,443 from Internet
+                    │
+    ┌───────────────┴───────────────┐
+    │                               │
+ Node Security Group          Node Security Group
+ 80 from ALB SG              80 from ALB SG
+ 22 from your IP             22 from your IP
+            │
+            │ 27017
+            ▼
+    Mongo Security Group
+  Only from Node SG
+```
+
+## ALB Security Group
+
+The ALB security group is the only one with inbound rules sourced from `0.0.0.0/0`, making it the sole public-facing entry point into the stack.
+
+| Direction | Protocol | Port | Source         | Description          |
+|-----------|----------|------|----------------|----------------------|
+| Inbound   | TCP      | 80   | `0.0.0.0/0`   | HTTP from internet   |
+| Inbound   | TCP      | 443  | `0.0.0.0/0`   | HTTPS from internet  |
+| Outbound  | All      | All  | `0.0.0.0/0`   | All outbound traffic |
+
+Name tag: `<project_name>-alb-sg`
+
+## Node.js Security Group
+
+The Node security group restricts HTTP traffic to originate only from the ALB security group ID (not a CIDR block). This means even if an IP address somehow matched the ALB's IP, it would be rejected unless it is traffic actually forwarded by the ALB itself.
+
+| Direction | Protocol | Port | Source              | Description              |
+|-----------|----------|------|---------------------|--------------------------|
+| Inbound   | TCP      | 80   | ALB Security Group  | HTTP forwarded from ALB  |
+| Inbound   | TCP      | 22   | `var.allowed_ssh_ip` | SSH from operator IP    |
+| Outbound  | All      | All  | `0.0.0.0/0`        | All outbound traffic     |
+
+Name tag: `<project_name>-node-sg`
+
+<Warning>
+  The `allowed_ssh_ip` variable must be set to your specific public IP address
+  (e.g. `"203.0.113.42/32"`). **Never set it to `0.0.0.0/0`**, as this would
+  expose SSH to the entire internet and is a critical security misconfiguration.
+  If you require shell access without opening SSH at all, use the IAM role and
+  AWS Systems Manager Session Manager instead.
+</Warning>
+
+## MongoDB Security Group
+
+The MongoDB security group has no inbound rules sourced from any CIDR. Port 27017 is open exclusively to the Node.js security group, so MongoDB is unreachable from the internet, from the public subnets, or from any other resource in the VPC that does not carry the Node security group.
+
+| Direction | Protocol | Port  | Source              | Description                     |
+|-----------|----------|-------|---------------------|---------------------------------|
+| Inbound   | TCP      | 27017 | Node Security Group | MongoDB from Node.js tier only  |
+| Outbound  | All      | All   | `0.0.0.0/0`        | All outbound traffic            |
+
+Name tag: `<project_name>-mongo-sg`
+
+<Note>
+  MongoDB is **never** assigned a public IP address (`associate_public_ip_address = false`
+  in `modules/ec2-instance/main.tf`). Combined with its private subnet placement
+  and the security group restriction above, this provides three independent
+  layers preventing direct internet access to the database.
+</Note>
+
+## EC2 Instance Hardening
+
+Every EC2 instance in the stack — regardless of tier — is provisioned with the same hardening baseline defined in the `ec2-instance` module.
+
+<CardGroup cols={2}>
+  <Card title="IMDSv2 Enforced" icon="shield-check">
+    `http_tokens = "required"` forces all requests to the EC2 Instance Metadata
+    Service to use session-oriented tokens. This prevents SSRF vulnerabilities
+    from being used to harvest IAM credentials or other sensitive metadata via
+    unauthenticated `GET` requests to `169.254.169.254`.
+  </Card>
+  <Card title="Encrypted gp3 EBS Volumes" icon="hard-drive">
+    Root block devices use the `gp3` volume type with `encrypted = true` and a
+    default size of 20 GB. Encryption is applied at rest using AWS-managed keys,
+    protecting data if a volume snapshot is ever exposed.
+  </Card>
+</CardGroup>
+
+The relevant `metadata_options` and `root_block_device` blocks from `modules/ec2-instance/main.tf`:
+
+```hcl
+metadata_options {
+
+  http_endpoint = "enabled"
+  http_tokens   = "required"
+
+}
+
+root_block_device {
+
+  volume_size = var.volume_size
+  volume_type = "gp3"
+  encrypted   = true
+
+}
+```
+
+## IAM Role and Instance Profile
+
+An IAM role named `<project_name>-ec2-role` is created and attached to every EC2 instance through an instance profile. The only managed policy attached is `AmazonSSMManagedInstanceCore`, which grants the minimum permissions needed for AWS Systems Manager Session Manager.
+
+| Resource              | Name                                                      |
+|-----------------------|-----------------------------------------------------------|
+| IAM Role              | `<project_name>-ec2-role`                                 |
+| Managed Policy        | `arn:aws:iam::aws:policy/AmazonSSMManagedInstanceCore`    |
+| Instance Profile      | `<project_name>-instance-profile`                         |
+
+**Why Session Manager?** With the `AmazonSSMManagedInstanceCore` policy and IMDSv2 enabled, operators can open an interactive shell session via the AWS Console or `aws ssm start-session` CLI command without any inbound security group rule for SSH. This eliminates the need to manage SSH key distribution for day-to-day operations and removes port 22 as an attack surface entirely.
+
+<Tip>
+  If your operational workflow does not require SSH at all, you can set
+  `allowed_ssh_ip` to a non-routable address such as `"127.0.0.1/32"` to
+  effectively disable the SSH inbound rule while keeping the security group
+  definition valid in Terraform.
+</Tip>
+
+## Node Security Group HCL
+
+The following is the exact Terraform declaration for the Node.js security group, taken from `modules/security/main.tf`:
+
+```hcl
+resource "aws_security_group" "node" {
+
+  name   = "${var.project_name}-node-sg"
+  vpc_id = var.vpc_id
+
+  ingress {
+
+    description = "HTTP from ALB"
+
+    from_port = 80
+    to_port   = 80
+
+    protocol = "tcp"
+
+    security_groups = [
+      aws_security_group.alb.id
+    ]
+
+  }
+
+  ingress {
+
+    description = "SSH"
+
+    from_port = 22
+    to_port   = 22
+
+    protocol = "tcp"
+
+    cidr_blocks = [
+      var.allowed_ssh_ip
+    ]
+
+  }
+
+  egress {
+
+    from_port = 0
+    to_port   = 0
+
+    protocol = "-1"
+
+    cidr_blocks = [
+      "0.0.0.0/0"
+    ]
+
+  }
+
+  tags = {
+    Name = "${var.project_name}-node-sg"
+  }
+
+}
+```

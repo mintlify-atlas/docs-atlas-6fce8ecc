@@ -1,0 +1,138 @@
+---
+title: "SSH Access and Instance Management on AWS"
+sidebarTitle: "SSH Access"
+description: "Connect to Node.js EC2 instances via SSH using the auto-generated key pair, and reach the private MongoDB instance through a jump host or SSM Session Manager."
+---
+
+The MEAN stack deployment exposes two distinct access paths. Public Node.js instances accept direct SSH connections on port 22, scoped to the IP you provided in `allowed_ssh_ip` at deploy time. The MongoDB instance lives in a private subnet with no public IP, so you reach it either by hopping through a Node instance as a jump host, or by using AWS Systems Manager Session Manager — which works for all three instances and requires no open SSH port at all.
+
+## Key Pair Setup
+
+The `keypair` module generates a 4096-bit RSA key pair at `terraform apply` time using the `tls_private_key` resource. The public half is registered in AWS as `<project_name>-key`; the private half is written to `keys/<project_name>.pem` on your local machine with `0400` permissions. Terraform also exports the full path as an output:
+
+```bash
+terraform output -raw private_key_path
+```
+
+Example output:
+
+```
+/home/user/terraform-mean-stack-aws/keys/terraform-mean.pem
+```
+
+<Warning>
+The `.pem` file is generated locally during `terraform apply` and is listed in `.gitignore`. It will **not** be recreated if lost — back it up to a secure location (password manager, encrypted vault, etc.) immediately after provisioning.
+</Warning>
+
+## SSH to Node.js Instances
+
+Both Node.js instances are deployed in public subnets and are reachable directly over SSH.
+
+<Steps>
+  <Step title="Retrieve the public IP">
+    ```bash
+    # Node 1
+    terraform output -raw node_1_public_ip
+
+    # Node 2
+    terraform output -raw node_2_public_ip
+    ```
+  </Step>
+
+  <Step title="Verify key file permissions">
+    SSH will refuse to use a key file that is too permissive. If you copied the key to another machine, reset permissions first:
+
+    ```bash
+    chmod 400 keys/terraform-mean.pem
+    ```
+  </Step>
+
+  <Step title="Connect via SSH">
+    ```bash
+    ssh -i keys/terraform-mean.pem ubuntu@<NODE_PUBLIC_IP>
+    ```
+
+    Replace `<NODE_PUBLIC_IP>` with the value from the previous step. The default user on Ubuntu AMIs is `ubuntu`.
+  </Step>
+</Steps>
+
+## Access MongoDB via Jump Host
+
+The MongoDB instance has no public IP — its security group (`terraform-mean-mongo-sg`) only accepts inbound traffic on port `27017` from the Node security group. To open a shell on the MongoDB instance, use Node 1 as an SSH jump host:
+
+```bash
+ssh -i keys/terraform-mean.pem \
+  -J ubuntu@$(terraform output -raw node_1_public_ip) \
+  ubuntu@$(terraform output -raw mongodb_private_ip)
+```
+
+The `-J` flag instructs SSH to establish the outer connection to Node 1 and then tunnel the inner connection onward to the MongoDB private IP — all in a single command.
+
+## AWS Systems Manager Session Manager
+
+Every EC2 instance in the stack — including the private MongoDB instance — is attached to an IAM instance profile that carries the `AmazonSSMManagedInstanceCore` managed policy. This grants SSM Agent the permissions it needs to register each instance with Systems Manager, letting you open a browser or CLI terminal session without any SSH key or open port.
+
+```bash
+# Install the Session Manager plugin for the AWS CLI (one-time setup)
+# https://docs.aws.amazon.com/systems-manager/latest/userguide/session-manager-working-with-install-plugin.html
+
+# Start a session using the EC2 instance ID
+aws ssm start-session --target <INSTANCE_ID> --region us-east-1
+```
+
+Find instance IDs in the AWS Console under **EC2 → Instances**, or via:
+
+```bash
+aws ec2 describe-instances \
+  --filters "Name=tag:Name,Values=terraform-mean-*" \
+  --query "Reservations[*].Instances[*].[InstanceId,Tags[?Key=='Name'].Value|[0]]" \
+  --output table \
+  --region us-east-1
+```
+
+<Tip>
+SSM Session Manager works even for the private MongoDB instance and does not require port 22 to be open. It is the recommended access method for audited or compliance-sensitive environments because all session activity is logged through AWS CloudTrail.
+</Tip>
+
+## Application Service Management
+
+Once connected to a Node.js instance, use `systemctl` and `journalctl` to manage the Node.js application (`nodeapp`) and the Nginx reverse proxy:
+
+```bash
+# Check Node.js app status
+sudo systemctl status nodeapp
+
+# Restart the app
+sudo systemctl restart nodeapp
+
+# Stream live application logs
+sudo journalctl -u nodeapp -f
+
+# Check Nginx status
+sudo systemctl status nginx
+
+# Reload Nginx config without downtime
+sudo systemctl reload nginx
+```
+
+The Node.js application runs from `/opt/app` as a `simple` systemd service. It is configured to restart automatically on failure (`Restart=always`, `RestartSec=5`), so transient errors recover without manual intervention.
+
+## MongoDB Service Management
+
+Once connected to the MongoDB instance, use the following commands to inspect and control the `mongod` service:
+
+```bash
+# Check MongoDB service status
+sudo systemctl status mongod
+
+# Restart MongoDB
+sudo systemctl restart mongod
+
+# Stream live MongoDB logs
+sudo journalctl -u mongod -f
+
+# Open the MongoDB shell
+mongosh
+```
+
+MongoDB 8.0 is installed from the official MongoDB repository and configured to bind on `0.0.0.0` so the Node.js instances can reach it over the private subnet. Access from outside the VPC is blocked entirely by the `terraform-mean-mongo-sg` security group.

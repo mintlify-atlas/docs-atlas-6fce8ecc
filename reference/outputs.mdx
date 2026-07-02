@@ -1,0 +1,167 @@
+---
+title: "Terraform Outputs Reference for MEAN Stack AWS"
+sidebarTitle: "Outputs"
+description: "All 9 Terraform outputs after applying the MEAN stack — VPC ID, node IPs, MongoDB private IP, ALB DNS, NAT Gateway IP, and SSH key path."
+---
+
+Terraform outputs capture the key values you need to access and manage the deployed MEAN stack infrastructure. They are printed to the terminal at the end of every successful `terraform apply` run and can be retrieved at any time thereafter without re-running a plan or apply. Outputs are sourced from module return values — each group of resources (network, compute, load balancer, keypair) exposes its identifiers upward to the root module, which re-exports them as the named outputs documented here.
+
+## Accessing Outputs
+
+```bash
+# Print all outputs
+terraform output
+
+# Get a specific output value
+terraform output alb_dns_name
+
+# Get raw value (no quotes, useful in scripts)
+terraform output -raw alb_dns_name
+
+# Get all outputs as JSON
+terraform output -json
+```
+
+<Tip>
+  Use `terraform output -json | jq` to parse outputs programmatically in CI/CD pipelines. For example, `terraform output -json | jq -r '.alb_dns_name.value'` extracts just the ALB hostname with no extra formatting.
+</Tip>
+
+---
+
+## Network
+
+<ResponseField name="vpc_id" type="string">
+  The ID of the provisioned VPC. Use this value when creating additional resources outside of Terraform that need to be attached to the same network, or when troubleshooting VPC-level routing in the AWS Console.
+
+  Example value: `vpc-0abc123def456789a`
+</ResponseField>
+
+---
+
+## Node 1
+
+<ResponseField name="node_1_public_ip" type="string">
+  Public IPv4 address of Node.js Server 1. This instance sits in Public Subnet A (`availability_zone_1`) and is registered as a target behind the Application Load Balancer. Use this address for direct SSH access when you need to inspect logs, run deployment scripts, or use Node 1 as a jump host into the private subnet.
+
+  Example value: `54.210.100.1`
+</ResponseField>
+
+<ResponseField name="node_1_private_ip" type="string">
+  Private IPv4 address of Node.js Server 1 within the VPC. Used for inter-service communication — for example, when configuring the MongoDB connection string on the Node 1 host to reach the database in the private subnet.
+
+  Example value: `10.0.1.50`
+</ResponseField>
+
+---
+
+## Node 2
+
+<ResponseField name="node_2_public_ip" type="string">
+  Public IPv4 address of Node.js Server 2. This instance sits in Public Subnet B (`availability_zone_2`), providing cross-AZ redundancy alongside Node 1. Use this address for direct SSH access to the second application server.
+
+  Example value: `54.210.100.2`
+</ResponseField>
+
+<ResponseField name="node_2_private_ip" type="string">
+  Private IPv4 address of Node.js Server 2 within the VPC. Referenced when diagnosing traffic distribution between the two Node instances or configuring intra-VPC communication.
+
+  Example value: `10.0.2.50`
+</ResponseField>
+
+---
+
+## MongoDB
+
+<ResponseField name="mongodb_private_ip" type="string">
+  Private IPv4 address of the MongoDB instance. The MongoDB server is deployed exclusively in the private subnet — it has no public IP address and no inbound internet access. To connect, use one of the Node.js instances as a jump host (see the SSH examples below) or use AWS Systems Manager Session Manager if configured.
+
+  Example value: `10.0.3.100`
+</ResponseField>
+
+---
+
+## Load Balancer
+
+<ResponseField name="alb_dns_name" type="string">
+  DNS hostname of the Application Load Balancer. This is the primary entry point for all HTTP traffic to your application — share this address with users or point a custom domain's CNAME record at it. The ALB distributes requests across both Node.js instances and performs health checks to route away from unhealthy targets.
+
+  Example value: `terraform-mean-alb-1234567890.us-east-1.elb.amazonaws.com`
+</ResponseField>
+
+---
+
+## NAT Gateway
+
+<ResponseField name="nat_gateway_public_ip" type="string">
+  The Elastic IP address associated with the NAT Gateway. All outbound internet traffic from the private subnet (including MongoDB's OS updates and package downloads) exits through this IP. If you need to allowlist outbound traffic from your private subnet in a third-party firewall or service, this is the IP to use.
+
+  Example value: `34.205.200.10`
+</ResponseField>
+
+---
+
+## SSH Key
+
+<ResponseField name="private_key_path" type="string">
+  Filesystem path to the auto-generated PEM private key file. The key pair is created by the `keypair` module using the Terraform TLS provider and written to the local `keys/` directory at apply time. Pass this path to `ssh -i` to authenticate to both Node instances.
+
+  Example value: `keys/terraform-mean.pem`
+</ResponseField>
+
+---
+
+## Practical Usage Examples
+
+<Expandable title="Application access and health checks">
+  ```bash
+  # Access the application via the load balancer
+  curl http://$(terraform output -raw alb_dns_name)/
+
+  # Check application health endpoint
+  curl http://$(terraform output -raw alb_dns_name)/health
+  ```
+</Expandable>
+
+<Expandable title="SSH to Node instances">
+  ```bash
+  # SSH to Node 1
+  ssh -i $(terraform output -raw private_key_path) ubuntu@$(terraform output -raw node_1_public_ip)
+
+  # SSH to Node 2
+  ssh -i $(terraform output -raw private_key_path) ubuntu@$(terraform output -raw node_2_public_ip)
+  ```
+</Expandable>
+
+<Expandable title="Reach MongoDB via jump host">
+  ```bash
+  # Access MongoDB via Node 1 as a jump host
+  ssh -i $(terraform output -raw private_key_path) \
+    -J ubuntu@$(terraform output -raw node_1_public_ip) \
+    ubuntu@$(terraform output -raw mongodb_private_ip)
+  ```
+</Expandable>
+
+<Expandable title="Parse outputs in scripts and CI/CD">
+  ```bash
+  # Extract ALB hostname as a plain string
+  ALB=$(terraform output -raw alb_dns_name)
+  echo "Application available at: http://$ALB/"
+
+  # Parse all outputs as JSON (requires jq)
+  terraform output -json | jq '{
+    alb:     .alb_dns_name.value,
+    node1:   .node_1_public_ip.value,
+    node2:   .node_2_public_ip.value,
+    mongodb: .mongodb_private_ip.value,
+    nat:     .nat_gateway_public_ip.value
+  }'
+  ```
+</Expandable>
+
+---
+
+## State and Output Recovery
+
+<Note>
+  Outputs are stored in Terraform state (`terraform.tfstate` or in your S3 backend) — they are not written to any external file. If you lose access to state, you can attempt to recover output values by running `terraform refresh` while the underlying infrastructure still exists. Terraform will re-read the live resource attributes from AWS and repopulate the state file.
+</Note>

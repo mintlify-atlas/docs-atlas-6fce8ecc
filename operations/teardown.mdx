@@ -1,0 +1,133 @@
+---
+title: "Tear Down and Destroy the MEAN Stack Infrastructure"
+sidebarTitle: "Teardown"
+description: "Safely destroy all AWS resources provisioned by Terraform using terraform destroy, and understand what gets deleted and what must be cleaned up manually."
+---
+
+Running `terraform destroy` removes every AWS resource that Terraform created for this project in a single, coordinated operation. Terraform reads the current state file, builds a dependency graph of all managed resources, and tears them down in the correct reverse order. This includes the EC2 instances, load balancer, networking components, and IAM resources — the full stack is gone within a few minutes. Because this operation is irreversible for any data stored on those instances, take a moment to complete the pre-destroy checklist before proceeding.
+
+<Warning>
+`terraform destroy` is irreversible. EC2 instance storage is deleted permanently, and Elastic IP allocations are released back to the AWS pool. Ensure no critical application data or MongoDB documents exist on the stack before running the destroy command.
+</Warning>
+
+## Pre-Destroy Checklist
+
+<Steps>
+  <Step title="Export any MongoDB data you need">
+    The MongoDB instance has no automated backup. If you have stored data you want to keep, export it before destroying:
+
+    ```bash
+    # SSH to the MongoDB instance (via jump host or SSM), then:
+    mongodump --out /tmp/backup
+    # Copy the dump to your local machine via scp or SSM file transfer
+    ```
+  </Step>
+
+  <Step title="Back up the SSH key">
+    The local `keys/<project_name>.pem` file is **not** destroyed by Terraform, but the corresponding AWS Key Pair resource is. If you plan to re-use the same key name in a future deployment, copy the `.pem` file to a safe location now:
+
+    ```bash
+    cp keys/terraform-mean.pem ~/secure-backups/terraform-mean.pem
+    ```
+  </Step>
+
+  <Step title="Confirm the S3 backend bucket is out of scope">
+    The S3 bucket that stores the Terraform state file was created outside this project and is not tracked in the state. It will **not** be destroyed. You can verify which bucket is configured in `backend.tf` before proceeding.
+  </Step>
+</Steps>
+
+## Run the Destroy Command
+
+```bash
+terraform destroy
+```
+
+Terraform prints a full destruction plan listing every resource it will remove, then prompts for confirmation:
+
+```
+Do you really want to destroy all resources?
+  Terraform will destroy all your managed infrastructure, as shown above.
+  There is no undo. Only 'yes' will be accepted to confirm.
+
+  Enter a value:
+```
+
+Type `yes` and press Enter. The operation typically takes 3–5 minutes, with the NAT Gateway and ALB taking the longest to deprovision.
+
+To skip the confirmation prompt in CI pipelines or scripted workflows:
+
+```bash
+terraform destroy -auto-approve
+```
+
+## What Gets Destroyed
+
+All resources managed by this Terraform project are removed, including:
+
+<CardGroup cols={2}>
+  <Card title="Compute" icon="server">
+    - EC2 instance: `node-1`
+    - EC2 instance: `node-2`
+    - EC2 instance: `mongodb`
+    - AWS Key Pair (`<project_name>-key`)
+  </Card>
+  <Card title="Load Balancer" icon="shuffle">
+    - Application Load Balancer
+    - Target group
+    - HTTP listener
+    - Target group attachments
+  </Card>
+  <Card title="Networking" icon="network-wired">
+    - VPC
+    - Public subnets (×2)
+    - Private subnet
+    - Internet Gateway
+    - NAT Gateway
+    - Elastic IP (NAT)
+    - Route tables and associations
+  </Card>
+  <Card title="Security & IAM" icon="shield">
+    - Security groups (ALB, Node, MongoDB)
+    - IAM role (`<project_name>-ec2-role`)
+    - IAM policy attachment (SSM)
+    - IAM instance profile
+  </Card>
+</CardGroup>
+
+## What Is NOT Destroyed
+
+| Resource | Reason |
+|---|---|
+| S3 state bucket | Created outside this project; not in Terraform state |
+| `keys/<project_name>.pem` | Local file resource; Terraform removes it from state but leaves it on disk |
+| MongoDB data | Stored on EC2 instance storage — deleted with the instance, not recoverable |
+
+## Partial Destroy
+
+If you want to tear down only a specific module without removing the entire stack, use the `-target` flag:
+
+```bash
+# Destroy only the Node 1 instance
+terraform destroy -target=module.node_1
+
+# Destroy only the load balancer
+terraform destroy -target=module.alb
+```
+
+<Note>
+Partial destroys can leave the stack in an inconsistent state — for example, destroying the ALB while Node instances remain running. Use targeted destroy only for debugging or cost-saving experiments, not as a routine workflow.
+</Note>
+
+## Re-Deploying After Destroy
+
+Once `terraform destroy` completes, the state file is empty and you can provision a completely fresh stack with:
+
+```bash
+terraform apply
+```
+
+A new RSA 4096-bit SSH key pair is generated automatically and written to `keys/<project_name>.pem`. All IP addresses, DNS names, and instance IDs will differ from the previous deployment.
+
+<Tip>
+The NAT Gateway and Application Load Balancer account for the majority of the hourly cost in this stack. In development or lab environments, always run `terraform destroy` when the stack is not actively in use to avoid unnecessary charges — both resources accrue costs even when idle.
+</Tip>

@@ -1,47 +1,262 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get Started with Terraform AWS MEAN Stack"
+sidebarTitle: "Quickstart"
+description: "Clone the repo, configure your AWS credentials and variables, then run terraform apply to deploy a full MEAN stack on AWS in under 5 minutes."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
-
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
-
-## Prerequisites
-
-Before you begin, you must have:
-
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
-
-## Get started
+This guide walks you through every step required to go from zero to a fully running, highly available MEAN stack on AWS. By the end you will have two Node.js application servers behind an Application Load Balancer and a private MongoDB instance — all provisioned automatically by Terraform.
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
+
+  <Step title="Prerequisites Check">
+    Before you begin, confirm you have the following tools installed and configured.
+
+    **Terraform >= 1.12**
 
     ```bash
-    npm install your-package
+    terraform -version
     ```
-  </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
+
+    The output must show `Terraform v1.12.0` or higher. Download the latest version from [developer.hashicorp.com/terraform/downloads](https://developer.hashicorp.com/terraform/downloads) if needed.
+
+    **AWS CLI — configured with credentials**
 
     ```bash
-    your-cli init
+    aws sts get-caller-identity
     ```
-  </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
+
+    A successful response returns your `UserId`, `Account`, and `Arn`. If it fails, run `aws configure` and supply your `AWS Access Key ID`, `AWS Secret Access Key`, and default region.
+
+    **S3 Bucket for Terraform Backend**
+
+    You need an existing S3 bucket to store Terraform remote state. Create one if you don't already have one:
 
     ```bash
-    your-cli start
+    aws s3api create-bucket \
+      --bucket my-terraform-state-bucket \
+      --region us-east-1
+    ```
+
+    <Note>
+      S3 bucket names are globally unique. Replace `my-terraform-state-bucket` with a name that is unique to your AWS account.
+    </Note>
+  </Step>
+
+  <Step title="Clone the Repository">
+    Clone the project and change into its directory:
+
+    ```bash
+    git clone https://github.com/mcamacho97/terraform-mean-stack-aws.git && cd terraform-mean-stack-aws
     ```
   </Step>
+
+  <Step title="Create backend.hcl">
+    The `backend.tf` file contains an empty `s3` backend block that is populated at `terraform init` time via a separate configuration file. Create `backend.hcl` in the project root with your S3 bucket details:
+
+    ```hcl
+    bucket  = "my-terraform-state-bucket"
+    key     = "terraform-mean/terraform.tfstate"
+    region  = "us-east-1"
+    encrypt = true
+    ```
+
+    <Note>
+      `backend.hcl` contains environment-specific values and should **not** be committed to source control. Add it to your `.gitignore`.
+    </Note>
+  </Step>
+
+  <Step title="Create terraform.tfvars">
+    Copy the provided example file and customise it with your own values:
+
+    ```bash
+    cp terraform.tfvars.example terraform.tfvars
+    ```
+
+    The full set of required variables is shown below. Open `terraform.tfvars` in your editor and update the values as needed:
+
+    ```hcl
+    project_name         = "terraform-mean"
+    environment          = "lab"
+    aws_region           = "us-east-1"
+
+    vpc_cidr             = "10.0.0.0/16"
+    public_subnet_1_cidr = "10.0.1.0/24"
+    public_subnet_2_cidr = "10.0.2.0/24"
+    private_subnet_cidr  = "10.0.3.0/24"
+
+    availability_zone_1  = "us-east-1a"
+    availability_zone_2  = "us-east-1b"
+
+    instance_type        = "t2.micro"
+    node_instance_count  = 2
+
+    allowed_ssh_ip       = "YOUR_PUBLIC_IP/32"
+    ```
+
+    <Note>
+      The `allowed_ssh_ip` variable restricts SSH access to a single IP. Get your current public IP by running:
+
+      ```bash
+      curl ifconfig.me
+      ```
+
+      Replace `YOUR_PUBLIC_IP/32` with the returned address, for example `203.0.113.42/32`.
+    </Note>
+  </Step>
+
+  <Step title="Initialize Terraform">
+    Initialize the working directory, download required providers, and configure the S3 backend in one command:
+
+    ```bash
+    terraform init -backend-config=backend.hcl
+    ```
+
+    A successful run ends with:
+
+    ```
+    Terraform has been successfully initialized!
+    ```
+  </Step>
+
+  <Step title="Validate the Configuration">
+    Check that all Terraform files are syntactically correct and internally consistent:
+
+    ```bash
+    terraform validate
+    ```
+
+    Expected output:
+
+    ```
+    Success! The configuration is valid.
+    ```
+  </Step>
+
+  <Step title="Review the Plan">
+    Preview every resource Terraform will create before touching your AWS account:
+
+    ```bash
+    terraform plan
+    ```
+
+    Review the output carefully. You should see resources being created across the `network`, `security`, `keypair`, `iam`, `ec2-instance` (×3), and `alb` modules — approximately 25–30 resources in total.
+
+    <Tip>
+      Save the plan to a file with `terraform plan -out=tfplan` and then apply that exact plan with `terraform apply tfplan` to avoid any drift between plan and apply.
+    </Tip>
+  </Step>
+
+  <Step title="Apply the Configuration">
+    Deploy all infrastructure to AWS:
+
+    ```bash
+    terraform apply
+    ```
+
+    Terraform will display the execution plan one final time and prompt for confirmation. Type `yes` to proceed.
+
+    <Note>
+      A full deployment typically takes **3–5 minutes**. The majority of this time is EC2 instance launch and user-data script execution (Node.js, Nginx, and MongoDB installation).
+    </Note>
+
+    <Warning>
+      Running this command provisions real AWS resources that **will incur costs**. Remember to run `terraform destroy` when you are finished to tear everything down.
+    </Warning>
+  </Step>
+
+  <Step title="Access Your Application">
+    Once `terraform apply` completes, retrieve the ALB DNS name from the Terraform outputs:
+
+    ```bash
+    terraform output alb_dns_name
+    ```
+
+    Copy the returned DNS name and open it in your browser:
+
+    ```
+    http://<alb_dns_name>
+    ```
+
+    The ALB routes requests to one of the two Node.js + Nginx application nodes. If you see your Express application's response, the deployment was successful.
+
+    <Note>
+      It may take an additional **1–2 minutes** after `terraform apply` finishes for the user-data scripts to complete and the ALB health checks to report the targets as healthy.
+    </Note>
+  </Step>
+
 </Steps>
 
-<Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
+---
 
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
+## What Was Deployed
+
+After a successful `terraform apply`, the following outputs are available:
+
+```bash
+terraform output
+```
+
+| Output | Description |
+|---|---|
+| `node_1_public_ip` | Public IP address of the first Node.js application server (AZ 1) |
+| `node_2_public_ip` | Public IP address of the second Node.js application server (AZ 2) |
+| `mongodb_private_ip` | Private IP of the MongoDB instance (accessible from app nodes only) |
+| `alb_dns_name` | DNS name of the Application Load Balancer — use this as your app URL |
+| `nat_gateway_public_ip` | Elastic IP assigned to the NAT Gateway (outbound traffic from private subnet) |
+| `private_key_path` | Local path to the auto-generated SSH private key file |
+
+You can query any individual output by name:
+
+<CodeGroup>
+
+```bash ALB DNS
+terraform output alb_dns_name
+```
+
+```bash Node IPs
+terraform output node_1_public_ip
+terraform output node_2_public_ip
+```
+
+```bash MongoDB Private IP
+terraform output mongodb_private_ip
+```
+
+```bash SSH Key Path
+terraform output private_key_path
+```
+
+</CodeGroup>
+
+---
+
+## SSH Access
+
+<Note>
+  The SSH private key is automatically generated by Terraform and saved locally at `keys/<project_name>.pem` (for example, `keys/terraform-mean.pem`). Set the correct permissions before using it:
+
+  ```bash
+  chmod 400 keys/terraform-mean.pem
+  ssh -i keys/terraform-mean.pem ubuntu@<node_1_public_ip>
+  ```
+</Note>
+
+---
+
+## Tear Down
+
+When you are done, destroy all provisioned resources to avoid ongoing AWS charges:
+
+```bash
+terraform destroy
+```
+
+Type `yes` at the confirmation prompt. Terraform will remove every resource it created in reverse dependency order.
+
+---
+
+<Tip>
+  Now that your infrastructure is running, explore the **Architecture Overview** to understand how the modules are wired together and how to extend the project for production workloads.
+
+  [View Architecture Overview →](/architecture/overview)
 </Tip>

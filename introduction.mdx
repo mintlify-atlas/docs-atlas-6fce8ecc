@@ -1,0 +1,131 @@
+---
+title: "Terraform AWS MEAN Stack: HA Multi-Tier Infrastructure"
+sidebarTitle: "Introduction"
+description: "Deploy a fully automated MEAN stack on AWS with Terraform — modular VPC, ALB, Node.js, MongoDB, and Nginx provisioned across two Availability Zones."
+---
+
+This project is a Terraform Infrastructure as Code (IaC) implementation that provisions a production-ready, highly available multi-tier MEAN stack on AWS. It covers the complete picture: from the network layer (VPC, subnets, gateways) through compute (EC2), load balancing (ALB), and application runtime (Node.js 22 + Express 5 + MongoDB 8.0 behind Nginx), all fully automated using Terraform modules and user-data provisioning scripts — with remote state stored securely in S3.
+
+---
+
+## Architecture
+
+Traffic flows from the public internet through an Application Load Balancer distributed across two Availability Zones. Each AZ hosts an EC2 instance running Ubuntu 24.04 LTS with Node.js, Express, and an Nginx reverse proxy. Both application nodes communicate with a MongoDB 8.0 instance isolated in a private subnet. That private instance reaches the internet for package installation and updates through a NAT Gateway.
+
+```text
+                    Internet
+                        │
+              Application Load Balancer
+                        │
+          ┌─────────────┴─────────────┐
+          │                           │
+      EC2 Node 1                 EC2 Node 2
+   Ubuntu + Node.js + Nginx   Ubuntu + Node.js + Nginx
+          │                           │
+          └─────────────┬─────────────┘
+                        │
+               EC2 MongoDB (Private)
+                        │
+                  NAT Gateway
+                        │
+                Internet Gateway
+```
+
+---
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Modular Architecture" icon="cubes">
+    The codebase is split into focused Terraform modules — `network`, `security`, `keypair`, `iam`, `ec2-instance`, and `alb` — making each component independently reusable and testable.
+  </Card>
+  <Card title="High Availability Across 2 AZs" icon="layer-group">
+    Application nodes are deployed in two separate Availability Zones (`us-east-1a` and `us-east-1b` by default), eliminating single points of failure at the compute layer.
+  </Card>
+  <Card title="ALB with Health Checks" icon="heart-pulse">
+    An Application Load Balancer distributes HTTP traffic across both Node.js instances and continuously monitors their health, automatically routing around unhealthy targets.
+  </Card>
+  <Card title="Private MongoDB Subnet" icon="lock">
+    The MongoDB server is placed in a private subnet with no public IP, accessible only from the application tier via a dedicated security group rule, minimising the database attack surface.
+  </Card>
+  <Card title="Automated Provisioning via User-Data" icon="terminal">
+    Shell scripts in the `userdata/` directory bootstrap Node.js + Nginx on application nodes and install MongoDB on the database node automatically at first boot — zero manual setup required.
+  </Card>
+  <Card title="S3 Remote State" icon="cloud">
+    Terraform state is stored in an S3 backend configured via `backend.hcl`, enabling safe team collaboration, state locking, and disaster recovery without committing sensitive state to source control.
+  </Card>
+</CardGroup>
+
+---
+
+## Technologies
+
+| Layer | Technology | Version |
+|---|---|---|
+| IaC | Terraform | >= 1.12 |
+| Cloud Provider | AWS (Hashicorp Provider) | ~> 6.0 |
+| TLS Key Generation | Hashicorp TLS Provider | ~> 4.0 |
+| OS | Ubuntu Server LTS | 24.04 |
+| Runtime | Node.js | 22 |
+| Web Framework | Express | 5 |
+| Database | MongoDB | 8.0 |
+| Reverse Proxy | Nginx | latest |
+
+---
+
+## AWS Resources Deployed
+
+The following AWS resources are created by a single `terraform apply`:
+
+| Resource | Count | Notes |
+|---|---|---|
+| VPC | 1 | Dedicated network with custom CIDR |
+| Public Subnets | 2 | One per Availability Zone |
+| Private Subnet | 1 | Hosts the MongoDB instance |
+| Internet Gateway | 1 | Attached to the VPC |
+| NAT Gateway | 1 | Enables outbound internet from private subnet |
+| Application Load Balancer | 1 | HTTP listener across both public subnets |
+| Security Groups | 3 | Separate groups for ALB, Node.js nodes, and MongoDB |
+| EC2 Instances | 3 | 2 Node.js application servers + 1 MongoDB server |
+| IAM Role & Instance Profile | 1 | Attached to all EC2 instances |
+| SSH Key Pair | 1 | Auto-generated; private key saved locally to `keys/` |
+
+---
+
+## Project Structure
+
+```text
+terraform-mean/
+│
+├── backend.tf              # S3 backend configuration block
+├── provider.tf             # AWS provider settings
+├── versions.tf             # Terraform & provider version constraints
+├── variables.tf            # Input variable declarations
+├── terraform.tfvars        # Variable values (not committed)
+├── locals.tf               # Local value expressions
+├── data.tf                 # Data sources (e.g., Ubuntu AMI lookup)
+├── outputs.tf              # Output values after apply
+├── main.tf                 # Root module — wires all child modules together
+│
+├── modules/
+│   ├── network/            # VPC, subnets, IGW, NAT Gateway
+│   ├── security/           # Security groups for ALB, nodes, MongoDB
+│   ├── keypair/            # TLS key generation and local file save
+│   ├── iam/                # IAM role and instance profile
+│   ├── ec2-instance/       # Reusable EC2 instance module
+│   └── alb/                # Application Load Balancer and target group
+│
+└── userdata/
+    ├── node.sh             # Bootstraps Node.js 22, Express 5, and Nginx
+    └── mongo.sh            # Bootstraps MongoDB 8.0
+```
+
+---
+
+## Get Started
+
+Ready to deploy your MEAN stack on AWS?
+
+<Card title="Quickstart Guide" icon="rocket" href="/quickstart">
+  Clone the repository, configure your variables, and run `terraform apply` to have a fully running MEAN stack infrastructure on AWS in under five minutes.
+</Card>

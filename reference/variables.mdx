@@ -1,0 +1,212 @@
+---
+title: "Input Variables Reference for Terraform MEAN Stack"
+sidebarTitle: "Variables"
+description: "Complete reference for all 12 Terraform input variables — project name, environment, AWS region, network CIDRs, instance type, and SSH access configuration."
+---
+
+All configuration for the MEAN stack deployment is driven through input variables defined in `variables.tf`. None of the variables carry default values — every setting must be explicitly provided, which ensures that deployments are intentional and environment-specific. At runtime, Terraform reads your values from a `terraform.tfvars` file that you create locally; a separate `backend.hcl` file supplies the S3 remote state configuration. Both files are gitignored to keep secrets and environment-specific values out of version control.
+
+## Configuration Files
+
+Before running any Terraform commands, create your local variable files from the provided example:
+
+```bash
+cp terraform.tfvars.example terraform.tfvars
+```
+
+| File | Purpose | Committed? |
+|---|---|---|
+| `terraform.tfvars` | Your variable values for the deployment | ❌ gitignored |
+| `backend.hcl` | S3 backend configuration (bucket, key, region) | ❌ gitignored |
+
+<Warning>
+  `terraform.tfvars` and `backend.hcl` are gitignored. Never commit these files — they contain environment-specific and sensitive values such as your SSH IP address.
+</Warning>
+
+---
+
+## Project Identity
+
+<ParamField path="project_name" type="string" required>
+  Project name used as a prefix for all AWS resource names. The value is interpolated into every resource name via `locals.tf` — for example, a project name of `"terraform-mean"` produces resources such as `terraform-mean-vpc`, `terraform-mean-alb`, `terraform-mean-node-1`, and `terraform-mean-mongodb`.
+
+  ```hcl
+  project_name = "terraform-mean"
+  ```
+</ParamField>
+
+<ParamField path="environment" type="string" required>
+  Deployment environment label. Applied as the `Environment` tag on all resources and used to distinguish between parallel deployments in the same AWS account.
+
+  Accepted values: `lab`, `dev`, `qa`, `prod`
+
+  ```hcl
+  environment = "lab"
+  ```
+</ParamField>
+
+<ParamField path="aws_region" type="string" required>
+  AWS region where all infrastructure will be provisioned. The availability zone variables must correspond to zones within this region.
+
+  ```hcl
+  aws_region = "us-east-1"
+  ```
+</ParamField>
+
+---
+
+## Network Configuration
+
+<ParamField path="vpc_cidr" type="string" required>
+  CIDR block for the VPC. All subnets must fall within this address space. The recommended `/16` block provides 65,536 addresses with room for future subnet expansion.
+
+  ```hcl
+  vpc_cidr = "10.0.0.0/16"
+  ```
+</ParamField>
+
+<ParamField path="public_subnet_1_cidr" type="string" required>
+  CIDR block for Public Subnet A. This subnet is placed in `availability_zone_1` and hosts Node.js Server 1. Instances here receive public IP addresses.
+
+  ```hcl
+  public_subnet_1_cidr = "10.0.1.0/24"
+  ```
+</ParamField>
+
+<ParamField path="public_subnet_2_cidr" type="string" required>
+  CIDR block for Public Subnet B. This subnet is placed in `availability_zone_2` and hosts Node.js Server 2. A second public subnet in a separate AZ enables multi-AZ ALB target registration.
+
+  ```hcl
+  public_subnet_2_cidr = "10.0.2.0/24"
+  ```
+</ParamField>
+
+<ParamField path="private_subnet_cidr" type="string" required>
+  CIDR block for the Private Subnet that hosts the MongoDB instance. Resources in this subnet have no direct public internet access — outbound traffic is routed through the NAT Gateway.
+
+  ```hcl
+  private_subnet_cidr = "10.0.3.0/24"
+  ```
+</ParamField>
+
+<ParamField path="availability_zone_1" type="string" required>
+  Availability Zone for Public Subnet A and the Private Subnet (MongoDB). Both Node 1 and MongoDB land in this AZ, minimising cross-AZ traffic between the application tier and the database tier.
+
+  ```hcl
+  availability_zone_1 = "us-east-1a"
+  ```
+</ParamField>
+
+<ParamField path="availability_zone_2" type="string" required>
+  Availability Zone for Public Subnet B. Node.js Server 2 is deployed here, distributing the compute tier across two AZs for resilience behind the ALB.
+
+  ```hcl
+  availability_zone_2 = "us-east-1b"
+  ```
+</ParamField>
+
+---
+
+## Compute
+
+<ParamField path="instance_type" type="string" required>
+  EC2 instance type applied to all three instances — Node 1, Node 2, and MongoDB. Using the same type across all instances simplifies cost estimation and capacity planning.
+
+  <Tip>
+    `t2.micro` is free-tier eligible (750 hours/month per account) and is the recommended value for lab and dev environments.
+  </Tip>
+
+  ```hcl
+  instance_type = "t2.micro"
+  ```
+</ParamField>
+
+<ParamField path="node_instance_count" type="number" required>
+  Number of Node.js application instances to provision. The default example value is `2`, which matches the two public subnets and provides basic redundancy behind the ALB. Adjusting this value beyond `2` requires corresponding subnet and AZ additions to the network configuration.
+
+  ```hcl
+  node_instance_count = 2
+  ```
+</ParamField>
+
+---
+
+## Security
+
+<ParamField path="allowed_ssh_ip" type="string" required>
+  The CIDR block permitted to connect via SSH to the Node.js instances. This value is written into the security group ingress rule for port 22. You must supply a `/32` host address (a single IP), not a range.
+
+  To find your current public IP:
+
+  ```bash
+  curl ifconfig.me
+  ```
+
+  ```hcl
+  allowed_ssh_ip = "203.0.113.42/32"
+  ```
+
+  <Warning>
+    Never set this to `0.0.0.0/0`. Exposing SSH to the public internet makes your instances an immediate target for brute-force attacks.
+  </Warning>
+</ParamField>
+
+---
+
+## Complete Example File
+
+The following is the full `terraform.tfvars.example` provided in the repository. Copy it to `terraform.tfvars` and replace the placeholder values before running `terraform apply`.
+
+```hcl
+project_name         = "terraform-mean"
+environment          = "lab"
+aws_region           = "us-east-1"
+
+vpc_cidr             = "10.0.0.0/16"
+public_subnet_1_cidr = "10.0.1.0/24"
+public_subnet_2_cidr = "10.0.2.0/24"
+private_subnet_cidr  = "10.0.3.0/24"
+
+availability_zone_1  = "us-east-1a"
+availability_zone_2  = "us-east-1b"
+
+instance_type        = "t2.micro"
+node_instance_count  = 2
+
+allowed_ssh_ip       = "YOUR_PUBLIC_IP/32"
+```
+
+---
+
+## Common Tags
+
+All AWS resources created by this project are tagged automatically via `locals.tf`. The `common_tags` local is passed to every module, so you can filter and identify resources in the AWS Console, Cost Explorer, and CloudTrail without manual tagging.
+
+| Tag Key | Value |
+|---|---|
+| `Project` | Value of `var.project_name` |
+| `Environment` | Value of `var.environment` |
+| `ManagedBy` | `"Terraform"` |
+
+These tags are defined in `locals.tf` alongside the `names` map that constructs every resource name from `var.project_name`:
+
+```hcl
+locals {
+  common_tags = {
+    Project     = var.project_name
+    Environment = var.environment
+    ManagedBy   = "Terraform"
+  }
+
+  names = {
+    vpc     = "${var.project_name}-vpc"
+    alb     = "${var.project_name}-alb"
+    node1   = "${var.project_name}-node-1"
+    node2   = "${var.project_name}-node-2"
+    mongodb = "${var.project_name}-mongodb"
+    igw     = "${var.project_name}-igw"
+    nat     = "${var.project_name}-nat"
+    keypair = "${var.project_name}-key"
+  }
+}
+```

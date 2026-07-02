@@ -1,0 +1,115 @@
+{
+  "projectType": "infrastructure",
+  "projectName": "Terraform AWS MEAN Stack",
+  "projectDescription": "A Terraform Infrastructure-as-Code project that deploys a highly available, multi-tier MEAN stack (MongoDB, Node.js, Nginx) on AWS using a modular architecture with VPC, ALB, EC2, IAM, and S3 remote state.",
+  "theme": "aspen",
+  "primaryColor": "#5C4EE5",
+  "lightColor": "#7B6FF0",
+  "darkColor": "#3B2EC4",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Architecture",
+            "pages": [
+              "architecture/overview",
+              "architecture/networking",
+              "architecture/security"
+            ]
+          },
+          {
+            "group": "Deployment",
+            "pages": [
+              "deployment/prerequisites",
+              "deployment/configuration",
+              "deployment/deploy",
+              "deployment/outputs"
+            ]
+          },
+          {
+            "group": "Operations",
+            "pages": [
+              "operations/ssh-access",
+              "operations/monitoring",
+              "operations/teardown"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Module Reference",
+        "groups": [
+          {
+            "group": "Modules",
+            "pages": [
+              "modules/overview",
+              "modules/network",
+              "modules/security",
+              "modules/ec2-instance",
+              "modules/alb",
+              "modules/iam",
+              "modules/keypair"
+            ]
+          },
+          {
+            "group": "Configuration Reference",
+            "pages": [
+              "reference/variables",
+              "reference/outputs"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Modular Terraform architecture with six reusable child modules",
+    "Highly available multi-tier deployment across two AWS Availability Zones",
+    "Application Load Balancer distributing traffic across two Node.js/Nginx EC2 instances",
+    "MongoDB server isolated in a private subnet with NAT Gateway for outbound access",
+    "Automated user-data provisioning of Node.js 22, Express, Nginx, and MongoDB 8.0",
+    "Auto-generated RSA 4096-bit SSH key pair stored locally as a .pem file",
+    "IAM instance profile with AmazonSSMManagedInstanceCore for session manager access",
+    "S3 remote state backend for team-friendly state management",
+    "IMDSv2 enforced on all EC2 instances with encrypted gp3 EBS root volumes",
+    "Common tagging strategy via Terraform locals for consistent resource management"
+  ],
+  "publicApiSurface": [
+    "variable: project_name",
+    "variable: environment",
+    "variable: aws_region",
+    "variable: vpc_cidr",
+    "variable: public_subnet_1_cidr",
+    "variable: public_subnet_2_cidr",
+    "variable: private_subnet_cidr",
+    "variable: availability_zone_1",
+    "variable: availability_zone_2",
+    "variable: instance_type",
+    "variable: node_instance_count",
+    "variable: allowed_ssh_ip",
+    "output: vpc_id",
+    "output: node_1_public_ip",
+    "output: node_1_private_ip",
+    "output: node_2_public_ip",
+    "output: node_2_private_ip",
+    "output: mongodb_private_ip",
+    "output: alb_dns_name",
+    "output: nat_gateway_public_ip",
+    "output: private_key_path",
+    "module: network",
+    "module: security",
+    "module: keypair",
+    "module: iam",
+    "module: ec2-instance",
+    "module: alb"
+  ]
+}

@@ -1,0 +1,124 @@
+---
+title: "Prerequisites for Deploying MEAN Stack on AWS"
+sidebarTitle: "Prerequisites"
+description: "Everything you need before running terraform apply: Terraform 1.12+, AWS CLI, an IAM user with sufficient permissions, and an S3 bucket for remote state."
+---
+
+Before you can provision the MEAN stack infrastructure, your local machine and AWS account must satisfy four requirements: the Terraform CLI (version 1.12 or later), the AWS CLI configured with valid credentials, an IAM user or role that holds the necessary service permissions, and an S3 bucket to store Terraform's remote state file. Each of these is covered in detail below.
+
+## Terraform CLI
+
+The project requires **Terraform >= 1.12**, as declared in `versions.tf`. Earlier versions may lack syntax support or provider compatibility used in this configuration.
+
+<CardGroup cols={2}>
+  <Card title="Install on macOS" icon="apple" href="https://developer.hashicorp.com/terraform/install#darwin">
+    Install via Homebrew or download the binary from HashiCorp
+  </Card>
+  <Card title="Install on Linux / Windows" icon="terminal" href="https://developer.hashicorp.com/terraform/install">
+    Package manager instructions and manual install guides
+  </Card>
+</CardGroup>
+
+After installing, verify the version:
+
+```bash
+terraform version
+```
+
+Expected output (version number will vary):
+
+```
+Terraform v1.12.0
+on linux_amd64
+```
+
+## AWS CLI
+
+Terraform uses the AWS CLI credential chain to authenticate API calls. Install the AWS CLI v2 and then run the interactive configuration wizard:
+
+```bash
+aws configure
+```
+
+The wizard prompts for four values:
+
+| Prompt | Example value |
+|---|---|
+| AWS Access Key ID | `AKIAIOSFODNN7EXAMPLE` |
+| AWS Secret Access Key | `wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY` |
+| Default region name | `us-east-1` |
+| Default output format | `json` |
+
+Once configured, confirm the credentials are working and note which IAM principal is active:
+
+```bash
+aws sts get-caller-identity
+```
+
+A successful response looks like:
+
+```json
+{
+    "UserId": "AIDAIOSFODNN7EXAMPLE",
+    "Account": "123456789012",
+    "Arn": "arn:aws:iam::123456789012:user/my-terraform-user"
+}
+```
+
+## AWS IAM Permissions
+
+The IAM user or role used by Terraform must have permissions across the following AWS services. The table lists the minimum access needed to create, update, and destroy all resources in this project.
+
+| Service | Required access |
+|---|---|
+| **EC2** | Full (`ec2:*`) — instances, AMI lookups, key pairs, security groups |
+| **VPC** | Full — VPC, subnets, route tables, internet gateways, NAT gateways |
+| **ELB / ALB** | Full — application load balancers, target groups, listeners |
+| **IAM** | Create and delete roles, instance profiles, and role attachments |
+| **S3** | `GetObject`, `PutObject`, `DeleteObject`, `ListBucket` on the state bucket |
+
+<Warning>
+  For production deployments, avoid attaching `AdministratorAccess` to the Terraform IAM user. Instead, author a custom IAM policy that grants only the actions listed above, scoped to specific resource ARNs where possible. This reduces blast radius in the event of a credential leak.
+</Warning>
+
+## S3 Backend Bucket
+
+Terraform stores its state file remotely in an S3 bucket. This enables team collaboration, state locking (when paired with DynamoDB), and prevents state loss if the local working directory is deleted.
+
+**Create the bucket:**
+
+```bash
+aws s3api create-bucket \
+  --bucket my-terraform-state-bucket \
+  --region us-east-1
+```
+
+**Enable versioning** so you can recover from accidental state corruption:
+
+```bash
+aws s3api put-bucket-versioning \
+  --bucket my-terraform-state-bucket \
+  --versioning-configuration Status=Enabled
+```
+
+<Note>
+  S3 bucket names must be globally unique. Choose a name that includes your project or organization identifier, for example `acme-terraform-mean-state`.
+</Note>
+
+## Terraform Providers
+
+When you run `terraform init`, Terraform automatically downloads the three providers declared in `versions.tf`. No manual installation is required.
+
+| Provider | Source | Version constraint |
+|---|---|---|
+| **aws** | `hashicorp/aws` | `~> 6.0` |
+| **tls** | `hashicorp/tls` | `~> 4.0` |
+| **local** | `hashicorp/local` | `~> 2.5` |
+
+The `aws` provider manages all AWS resources. The `tls` provider generates the RSA key pair for SSH access, and the `local` provider writes the resulting private key to your filesystem under `keys/`.
+
+<Tip>
+  Once all four prerequisites are satisfied, head to the next step to configure your deployment variables and backend settings.
+
+  [Configure Variables →](/deployment/configuration)
+</Tip>

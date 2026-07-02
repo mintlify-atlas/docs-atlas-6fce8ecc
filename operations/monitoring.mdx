@@ -1,0 +1,142 @@
+---
+title: "Monitoring and Health Checks for the MEAN Stack"
+sidebarTitle: "Monitoring"
+description: "Monitor the MEAN stack using ALB health checks, systemd service status, application log inspection, and the built-in Express health endpoint on each Node.js instance."
+---
+
+The MEAN stack ships with several layers of observability out of the box. The Application Load Balancer continuously probes each Node.js instance through a dedicated `/health` endpoint. Every service — the Node.js application, Nginx, and MongoDB — runs as a `systemd` unit with structured logging available through `journalctl`. No third-party monitoring agent is required to get meaningful health signals from this stack, though production workloads should extend these defaults with CloudWatch alarms and dashboards.
+
+## ALB Health Checks
+
+The ALB target group is configured to evaluate instance health against the Express `/health` endpoint. The full configuration from `modules/alb/main.tf`:
+
+| Parameter | Value |
+|---|---|
+| **Path** | `GET /health` |
+| **Protocol** | HTTP |
+| **Port** | 80 (Nginx → Node.js on 3000) |
+| **Expected status** | `200` |
+| **Interval** | 30 seconds |
+| **Timeout** | 5 seconds |
+| **Healthy threshold** | 2 consecutive successes |
+| **Unhealthy threshold** | 2 consecutive failures |
+
+An instance must return HTTP `200` from `/health` twice in a row before the ALB routes production traffic to it. Two consecutive failures mark it unhealthy and remove it from rotation.
+
+To check the current health of all registered targets via the AWS CLI, first find the target group ARN, then describe its health:
+
+```bash
+# Find the target group ARN by name
+aws elbv2 describe-target-groups \
+  --query "TargetGroups[?contains(TargetGroupName, 'terraform-mean')].TargetGroupArn" \
+  --output text \
+  --region us-east-1
+
+# Describe health for that ARN
+aws elbv2 describe-target-health \
+  --target-group-arn <TARGET_GROUP_ARN> \
+  --region us-east-1
+```
+
+<Note>
+The target group ARN is not exported as a Terraform output in this project. Use `describe-target-groups` as shown above, or navigate to **EC2 → Target Groups** in the AWS Console to find it.
+</Note>
+
+## Application Health Endpoint
+
+Each Node.js instance exposes two JSON endpoints, both served via the Express application defined in `userdata/node.sh`.
+
+**`GET /health`** — used by the ALB health check:
+
+```json
+{
+  "status": "healthy",
+  "hostname": "ip-10-0-1-45",
+  "uptime": 3821.5,
+  "timestamp": "2025-01-15T10:30:00.000Z"
+}
+```
+
+**`GET /`** — the root endpoint, confirming the application identity:
+
+```json
+{
+  "application": "Terraform MEAN Stack",
+  "version": "1.0.0",
+  "hostname": "ip-10-0-1-45",
+  "timestamp": "2025-01-15T10:30:00.000Z"
+}
+```
+
+The `hostname` field reflects the EC2 private DNS hostname, making it easy to identify which instance responded when testing through the load balancer. Test all three paths with `curl`:
+
+```bash
+# Via ALB — load balanced across both Node instances
+curl http://$(terraform output -raw alb_dns_name)/health
+
+# Direct to Node 1 — bypasses the ALB
+curl http://$(terraform output -raw node_1_public_ip)/health
+
+# Direct to Node 2 — bypasses the ALB
+curl http://$(terraform output -raw node_2_public_ip)/health
+```
+
+Hitting the ALB endpoint repeatedly and watching the `hostname` field rotate between the two instances confirms that load balancing is working correctly.
+
+## Service Status Checks
+
+SSH into either Node.js instance and run the following to inspect the application and reverse proxy layers:
+
+```bash
+# Node.js application status
+sudo systemctl status nodeapp
+
+# Application logs from the last hour
+sudo journalctl -u nodeapp --since "1 hour ago"
+
+# Nginx reverse proxy status
+sudo systemctl status nginx
+
+# Live Nginx access log
+sudo tail -f /var/log/nginx/access.log
+
+# Nginx error log
+sudo tail -f /var/log/nginx/error.log
+```
+
+Nginx proxies all inbound HTTP traffic on port 80 to `127.0.0.1:3000` where the Node.js process listens. If the ALB marks an instance unhealthy, check the Nginx error log first — a failed proxy connection to port 3000 is the most common symptom of the `nodeapp` service being down.
+
+## MongoDB Monitoring
+
+SSH into the MongoDB instance (via jump host or SSM) to inspect the database service:
+
+```bash
+# MongoDB service status
+sudo systemctl status mongod
+
+# MongoDB logs from the last hour
+sudo journalctl -u mongod --since "1 hour ago"
+
+# Check server uptime from the MongoDB shell
+mongosh --eval 'db.runCommand({serverStatus: 1}).uptime'
+```
+
+MongoDB 8.0 binds on `0.0.0.0` inside the private subnet. Confirm that Node.js can reach it by checking the `nodeapp` logs for connection errors — successful startup produces a log line from the Express server indicating the port it is listening on.
+
+## User-Data Bootstrap Logs
+
+Cloud-init runs the `userdata/node.sh` and `userdata/mongo.sh` scripts at first boot. If an instance appears unhealthy immediately after provisioning, check whether bootstrap completed successfully:
+
+```bash
+# Full cloud-init output (includes all stdout/stderr from user-data scripts)
+sudo cat /var/log/cloud-init-output.log
+
+# Structured cloud-init journal entries
+sudo journalctl -u cloud-init
+```
+
+Both user-data scripts run with `set -euxo pipefail`, so any failed command aborts the script and leaves a clear error message in the cloud-init log.
+
+<Note>
+This project sets `monitoring = false` on all EC2 instances, which means only basic CloudWatch monitoring is enabled (5-minute metric granularity). For production workloads, enable detailed monitoring (1-minute granularity) and create CloudWatch alarms on `CPUUtilization`, `StatusCheckFailed`, and ALB `UnHealthyHostCount` to get proactive alerting on instance or application failures.
+</Note>

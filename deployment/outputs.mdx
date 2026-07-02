@@ -1,0 +1,139 @@
+---
+title: "Terraform Outputs After MEAN Stack Deployment"
+sidebarTitle: "Outputs"
+description: "All values exported by Terraform after applying the MEAN stack — IP addresses, ALB DNS name, NAT Gateway IP, and the SSH private key file path."
+---
+
+After `terraform apply` completes, Terraform prints all output values to your terminal and stores them in the remote state file. These outputs surface the connection details and identifiers you need to access your application, SSH into servers, and integrate the deployment with other tooling. You can retrieve any output value at any time without re-running `apply`.
+
+## Accessing Outputs
+
+**Print all outputs to the terminal:**
+
+```bash
+terraform output
+```
+
+**Get a single output value:**
+
+```bash
+terraform output alb_dns_name
+```
+
+**Get a raw value** (no surrounding quotes — useful in shell scripts and command substitutions):
+
+```bash
+terraform output -raw alb_dns_name
+```
+
+**Get all outputs as machine-readable JSON:**
+
+```bash
+terraform output -json
+```
+
+## Output Reference
+
+### Network
+
+<ResponseField name="vpc_id" type="string">
+  The AWS-assigned ID of the provisioned VPC (e.g. `vpc-0abc123def456789`). Use this value when referencing the VPC in other Terraform workspaces or in the AWS console.
+</ResponseField>
+
+### Node 1
+
+<ResponseField name="node_1_public_ip" type="string">
+  Public IPv4 address of Node.js Server 1, located in Public Subnet A. Used for direct SSH access.
+</ResponseField>
+
+<ResponseField name="node_1_private_ip" type="string">
+  Private IPv4 address of Node.js Server 1 within the VPC (e.g. `10.0.1.x`). Used for internal service-to-service communication.
+</ResponseField>
+
+### Node 2
+
+<ResponseField name="node_2_public_ip" type="string">
+  Public IPv4 address of Node.js Server 2, located in Public Subnet B. Used for direct SSH access.
+</ResponseField>
+
+<ResponseField name="node_2_private_ip" type="string">
+  Private IPv4 address of Node.js Server 2 within the VPC (e.g. `10.0.2.x`). Used for internal service-to-service communication.
+</ResponseField>
+
+### MongoDB
+
+<ResponseField name="mongodb_private_ip" type="string">
+  Private IPv4 address of the MongoDB instance (e.g. `10.0.3.x`). MongoDB is deployed in the private subnet and has **no public IP address** — it is not directly reachable from the internet.
+</ResponseField>
+
+### Load Balancer
+
+<ResponseField name="alb_dns_name" type="string">
+  DNS hostname of the Application Load Balancer (e.g. `terraform-mean-alb-1234567890.us-east-1.elb.amazonaws.com`). This is the primary entry point for all HTTP traffic to your application. Share this address rather than the individual EC2 IPs.
+</ResponseField>
+
+### NAT Gateway
+
+<ResponseField name="nat_gateway_public_ip" type="string">
+  Elastic IP address associated with the NAT Gateway. Outbound internet traffic from the MongoDB instance in the private subnet exits AWS through this IP. Useful for whitelisting in third-party services or firewalls.
+</ResponseField>
+
+### SSH Key
+
+<ResponseField name="private_key_path" type="string">
+  Local filesystem path to the generated RSA private key file (e.g. `keys/terraform-mean.pem`). This file is created by the `local` provider during `apply`. Guard it carefully — it grants SSH access to all EC2 instances in the deployment.
+</ResponseField>
+
+## Using the Outputs
+
+### Access the Application
+
+Hit the root endpoint through the load balancer to confirm the application is serving traffic:
+
+```bash
+curl http://$(terraform output -raw alb_dns_name)/
+```
+
+Expected JSON response:
+
+```json
+{
+  "application": "Terraform MEAN Stack",
+  "version": "1.0.0",
+  "hostname": "ip-10-0-1-x",
+  "timestamp": "2025-01-15T12:00:00.000Z"
+}
+```
+
+### SSH into Node 1
+
+```bash
+ssh -i $(terraform output -raw private_key_path) ubuntu@$(terraform output -raw node_1_public_ip)
+```
+
+### SSH into Node 2
+
+```bash
+ssh -i $(terraform output -raw private_key_path) ubuntu@$(terraform output -raw node_2_public_ip)
+```
+
+### Connect to MongoDB via SSH Tunnel
+
+MongoDB has no public IP, so connect through one of the Node.js servers as a jump host. The following command opens a local tunnel on port `27017` that forwards to the MongoDB private IP:
+
+```bash
+ssh -i $(terraform output -raw private_key_path) \
+  -L 27017:$(terraform output -raw mongodb_private_ip):27017 \
+  ubuntu@$(terraform output -raw node_1_public_ip) \
+  -N
+```
+
+With the tunnel open, connect from your local machine using any MongoDB client:
+
+```bash
+mongosh "mongodb://localhost:27017"
+```
+
+<Note>
+  MongoDB has no public IP address and cannot be reached directly from the internet. All database access must route through one of the Node.js EC2 instances (via SSH tunnel as shown above) or through AWS Systems Manager Session Manager if the SSM agent is configured on the MongoDB instance.
+</Note>

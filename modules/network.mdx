@@ -1,0 +1,112 @@
+---
+title: "network Module: VPC, Subnets, and Gateways"
+sidebarTitle: "network"
+description: "The network module creates the VPC, two public subnets, one private subnet, Internet Gateway, NAT Gateway, Elastic IP, and route tables for the MEAN stack."
+---
+
+The `network` module is the foundational layer of the MEAN stack infrastructure. It provisions the entire AWS networking topology — a single VPC with DNS resolution and hostnames enabled, two public-facing subnets spread across two Availability Zones for high availability, one private subnet for the MongoDB instance, an Internet Gateway for public egress and ingress, a NAT Gateway so the private subnet can reach the internet without being reachable from it, and all associated route tables and their subnet associations.
+
+## Resources Created
+
+The module manages the following AWS resources:
+
+| Resource | Terraform name | Description |
+|---|---|---|
+| `aws_vpc` | `this` | VPC with DNS support and hostnames enabled |
+| `aws_internet_gateway` | `this` | IGW attached to the VPC |
+| `aws_subnet` | `public_1` | Public subnet A (AZ1), `map_public_ip_on_launch = true` |
+| `aws_subnet` | `public_2` | Public subnet B (AZ2), `map_public_ip_on_launch = true` |
+| `aws_subnet` | `private` | Private subnet (AZ1), no public IP on launch |
+| `aws_eip` | `nat` | Elastic IP allocated in the VPC domain for the NAT Gateway |
+| `aws_nat_gateway` | `this` | NAT Gateway in public subnet 1; depends on the IGW |
+| `aws_route_table` | `public` | Routes `0.0.0.0/0` to the Internet Gateway |
+| `aws_route_table` | `private` | Routes `0.0.0.0/0` to the NAT Gateway |
+| `aws_route_table_association` | `public_1` | Associates `public_1` subnet with the public route table |
+| `aws_route_table_association` | `public_2` | Associates `public_2` subnet with the public route table |
+| `aws_route_table_association` | `private` | Associates `private` subnet with the private route table |
+
+<Note>
+  The NAT Gateway has an explicit `depends_on = [aws_internet_gateway.this]` to ensure the IGW is fully attached before the NAT Gateway is created. Terraform's implicit dependency graph alone is not sufficient here.
+</Note>
+
+## Input Variables
+
+<ParamField path="project_name" type="string" required>
+  Prefix applied to all resource `Name` tags created by this module (e.g. `terraform-mean` produces `terraform-mean-vpc`).
+</ParamField>
+
+<ParamField path="environment" type="string" required>
+  Deployment environment label (e.g. `dev`, `staging`, `prod`). Passed through to resource tags for environment identification.
+</ParamField>
+
+<ParamField path="vpc_cidr" type="string" required>
+  CIDR block for the VPC (e.g. `10.0.0.0/16`). All subnets must be contained within this range.
+</ParamField>
+
+<ParamField path="public_subnet_1_cidr" type="string" required>
+  CIDR block for the first public subnet, placed in `availability_zone_1` (e.g. `10.0.1.0/24`).
+</ParamField>
+
+<ParamField path="public_subnet_2_cidr" type="string" required>
+  CIDR block for the second public subnet, placed in `availability_zone_2` (e.g. `10.0.2.0/24`).
+</ParamField>
+
+<ParamField path="private_subnet_cidr" type="string" required>
+  CIDR block for the private subnet, placed in `availability_zone_1` (e.g. `10.0.3.0/24`). MongoDB runs here with no public IP.
+</ParamField>
+
+<ParamField path="availability_zone_1" type="string" required>
+  AWS Availability Zone for public subnet A and the private subnet (e.g. `us-east-1a`). Also where the NAT Gateway is placed.
+</ParamField>
+
+<ParamField path="availability_zone_2" type="string" required>
+  AWS Availability Zone for public subnet B (e.g. `us-east-1b`). Using a second AZ allows the ALB to span multiple AZs.
+</ParamField>
+
+## Outputs
+
+<ResponseField name="vpc_id" type="string">
+  The ID of the created VPC. Consumed by the `security` and `alb` modules.
+</ResponseField>
+
+<ResponseField name="public_subnet_1_id" type="string">
+  The ID of public subnet A (AZ1). Used as the subnet for `node_1` and one of the two ALB subnets.
+</ResponseField>
+
+<ResponseField name="public_subnet_2_id" type="string">
+  The ID of public subnet B (AZ2). Used as the subnet for `node_2` and the second ALB subnet.
+</ResponseField>
+
+<ResponseField name="private_subnet_id" type="string">
+  The ID of the private subnet (AZ1). Used as the subnet for the `mongodb` EC2 instance.
+</ResponseField>
+
+<ResponseField name="nat_gateway_public_ip" type="string">
+  The public IP address of the Elastic IP attached to the NAT Gateway. Useful for allowlisting outbound traffic from private instances in external firewalls.
+</ResponseField>
+
+## Module Call
+
+The following shows exactly how the root `main.tf` invokes the `network` module:
+
+```hcl
+module "network" {
+  source = "./modules/network"
+
+  project_name = var.project_name
+  environment  = var.environment
+
+  vpc_cidr = var.vpc_cidr
+
+  public_subnet_1_cidr = var.public_subnet_1_cidr
+  public_subnet_2_cidr = var.public_subnet_2_cidr
+  private_subnet_cidr  = var.private_subnet_cidr
+
+  availability_zone_1 = var.availability_zone_1
+  availability_zone_2 = var.availability_zone_2
+}
+```
+
+<Tip>
+  Reference `module.network.nat_gateway_public_ip` after `terraform apply` to get the static outbound IP for the private subnet. You can add this IP to external allowlists for MongoDB Atlas or third-party APIs.
+</Tip>
