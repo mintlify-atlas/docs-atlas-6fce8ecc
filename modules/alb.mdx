@@ -1,7 +1,7 @@
 ---
-title: "alb Module: Application Load Balancer Setup"
+title: "alb Module: Internet-Facing Application Load Balancer"
 sidebarTitle: "alb"
-description: "The alb module creates an internet-facing ALB, HTTP listener on port 80, target group with health checks, and registers both Node.js EC2 instances as targets."
+description: "Provisions an internet-facing ALB, HTTP port 80 listener, target group with /health checks, and attaches both Node.js instances as targets."
 ---
 
 The `alb` module places an Application Load Balancer in front of the two Node.js EC2 instances, distributing HTTP traffic evenly across both application servers. The ALB spans both public subnets across two Availability Zones, providing fault tolerance at the load-balancing layer. Target registration uses a `for_each` over a map of instance IDs, so adding more Node.js instances in the future only requires extending that map.

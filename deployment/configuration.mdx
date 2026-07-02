@@ -1,7 +1,7 @@
 ---
 title: "Configure Variables for Your MEAN Stack Deployment"
 sidebarTitle: "Configuration"
-description: "Set all required Terraform variables including project name, AWS region, VPC CIDRs, availability zones, instance type, and SSH access IP before deploying."
+description: "Set all required Terraform variables: project name, AWS region, VPC CIDRs, availability zones, instance type, and SSH access IP before deploying."
 ---
 
 Before running `terraform init` or `terraform apply`, you need to populate two configuration files: `backend.hcl`, which tells Terraform where to store its remote state, and `terraform.tfvars`, which supplies values for every input variable the project declares. Neither file is committed to source control — both are listed in `.gitignore` to keep credentials and environment-specific settings out of your repository history.
@@ -122,7 +122,7 @@ availability_zone_2 = "us-east-1b"
 instance_type       = "t2.micro"
 node_instance_count = 2
 
-allowed_ssh_ip = "YOUR_IP/32" # Run: curl ifconfig.me
+allowed_ssh_ip = "TU_IP_PUBLICA/32" # curl ifconfig.me para obtener tu ip publica
 ```
 
 ## Common Resource Tags

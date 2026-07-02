@@ -1,7 +1,7 @@
 ---
-title: "AWS MEAN Stack Architecture: Multi-Tier Design"
+title: "MEAN Stack on AWS: Three-Tier Architecture Overview"
 sidebarTitle: "Overview"
-description: "Explore the three-tier AWS architecture: an ALB frontend, dual Node.js/Nginx app servers across two AZs, and a private MongoDB instance for data persistence."
+description: "Three-tier AWS architecture with an ALB frontend, dual Node.js/Nginx app servers across two AZs, and a private MongoDB instance for data persistence."
 ---
 
 This project deploys a production-grade MEAN stack on AWS using a classic three-tier architecture: a **web tier** handled by an Application Load Balancer, an **application tier** comprised of two Ubuntu EC2 instances running Node.js behind Nginx, and a **data tier** consisting of a MongoDB server isolated in a private subnet. Every resource is provisioned through Terraform modules, enabling repeatable, version-controlled infrastructure that can be torn down and recreated with a single command.

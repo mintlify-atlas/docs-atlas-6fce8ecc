@@ -1,7 +1,7 @@
 ---
-title: "Terraform Module Architecture: Six-Module Design"
+title: "Terraform Modules: Six-Module Architecture Overview"
 sidebarTitle: "Overview"
-description: "Overview of the six reusable Terraform child modules — network, security, ec2-instance, alb, iam, and keypair — and how they compose the full MEAN stack."
+description: "Six reusable Terraform modules — network, security, ec2-instance, alb, iam, keypair — compose the full MEAN stack infrastructure on AWS."
 ---
 
 The Terraform MEAN stack project is decomposed into six focused child modules, each owning a single infrastructure concern. Rather than managing every resource in a flat `main.tf`, this design keeps each module independently testable, versioned, and replaceable. The root configuration wires the modules together by passing outputs from one as inputs to another — for example, subnet IDs from `network` flow into `ec2-instance`, and security group IDs from `security` are consumed by both `ec2-instance` and `alb`.
@@ -143,7 +143,7 @@ module "alb" {
 Every module accepts a `project_name` variable and uses it as a consistent prefix for all resource names and tags. For example, with `project_name = "terraform-mean"`:
 
 | Module     | Example resource name              |
-|------------|------------------------------------|
+|------------|-------------------------------------|
 | network    | `terraform-mean-vpc`               |
 | security   | `terraform-mean-alb-sg`            |
 | ec2-instance | `terraform-mean-node-1`          |

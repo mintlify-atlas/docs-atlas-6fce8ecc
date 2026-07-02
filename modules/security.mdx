@@ -1,7 +1,7 @@
 ---
-title: "security Module: Three-Layer Security Groups"
+title: "security Module: Chained Three-Layer Security Groups"
 sidebarTitle: "security"
-description: "The security module creates three chained security groups for the ALB, Node.js instances, and MongoDB — enforcing least-privilege network access between tiers."
+description: "Defines three chained security groups for the ALB, Node.js instances, and MongoDB, enforcing least-privilege traffic between each tier."
 ---
 
 The `security` module implements network segmentation for the MEAN stack through three security groups that reference each other as sources. Traffic flows strictly top-to-bottom: the internet reaches the ALB, the ALB reaches Node.js instances, and Node.js instances are the only permitted source for MongoDB connections. No direct path exists from the internet to the application or database tier.

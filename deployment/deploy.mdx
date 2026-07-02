@@ -1,7 +1,7 @@
 ---
 title: "Deploy the MEAN Stack Infrastructure with Terraform"
 sidebarTitle: "Deploy"
-description: "Run terraform init, validate, plan, and apply to provision the full AWS MEAN stack. Understand what each command does and how to verify a successful deployment."
+description: "Run terraform init, validate, plan, and apply to provision the AWS MEAN stack. Learn what each command does and how to verify a successful deployment."
 ---
 
 Deploying the MEAN stack follows a standard Terraform workflow: initialize the working directory, validate the configuration syntax, preview the execution plan, and finally apply the changes to AWS. Each command is idempotent and safe to re-run — Terraform compares desired state against real infrastructure and only makes the changes necessary to converge. Full provisioning takes approximately three to five minutes from `terraform apply` to a live, health-checking application.

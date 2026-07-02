@@ -1,10 +1,14 @@
 ---
 title: "Input Variables Reference for Terraform MEAN Stack"
 sidebarTitle: "Variables"
-description: "Complete reference for all 12 Terraform input variables — project name, environment, AWS region, network CIDRs, instance type, and SSH access configuration."
+description: "Reference for all 12 Terraform input variables: naming, environment, AWS region, network CIDRs, compute settings, and SSH access control."
 ---
 
 All configuration for the MEAN stack deployment is driven through input variables defined in `variables.tf`. None of the variables carry default values — every setting must be explicitly provided, which ensures that deployments are intentional and environment-specific. At runtime, Terraform reads your values from a `terraform.tfvars` file that you create locally; a separate `backend.hcl` file supplies the S3 remote state configuration. Both files are gitignored to keep secrets and environment-specific values out of version control.
+
+<Note>
+  This project requires **Terraform >= 1.12**. Check your installed version with `terraform version` before proceeding.
+</Note>
 
 ## Configuration Files
 

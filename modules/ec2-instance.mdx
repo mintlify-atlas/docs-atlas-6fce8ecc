@@ -1,7 +1,7 @@
 ---
-title: "ec2-instance Module: Reusable EC2 Configuration"
+title: "ec2-instance Module: Reusable EC2 Instance Builder"
 sidebarTitle: "ec2-instance"
-description: "A reusable EC2 module used three times — for node-1, node-2, and mongodb — configuring IMDSv2, encrypted gp3 storage, user-data bootstrap, and IAM profiles."
+description: "Reusable EC2 module invoked three times for node-1, node-2, and mongodb with IMDSv2 enforcement, encrypted gp3 root volume, and user-data."
 ---
 
 The `ec2-instance` module is a general-purpose building block that the root configuration instantiates three times — once for each of the two Node.js servers (`node_1`, `node_2`) and once for the MongoDB database (`mongodb`). Each call passes different subnet IDs, security groups, public IP settings, and user-data scripts, producing three distinct instances from a single module definition. Shared concerns — IMDSv2 enforcement, encrypted storage, IAM profile attachment — are configured once inside the module and apply uniformly to all three instances.

@@ -1,7 +1,7 @@
 ---
-title: "Security Groups and IAM for MEAN Stack AWS"
+title: "Security Groups, IAM Roles, and EC2 Hardening on AWS"
 sidebarTitle: "Security"
-description: "Three-layer security group design isolating ALB, Node.js, and MongoDB tiers, plus IAM roles and IMDSv2 enforcement for hardened EC2 instances."
+description: "Three-layer security group design for ALB, Node.js, and MongoDB tiers, with IAM roles and IMDSv2 enforcement for hardened EC2 instances on AWS."
 ---
 
 Security in this stack is built on a defense-in-depth model: rather than relying on a single perimeter, three separate security groups enforce the principle of least privilege at every tier. The ALB security group accepts public web traffic, the Node security group accepts traffic only from the ALB, and the MongoDB security group accepts database connections only from the Node security group. No direct path from the internet to MongoDB exists at the network layer. On top of that, every EC2 instance is hardened with IMDSv2 enforcement, encrypted EBS volumes, and an IAM role that enables AWS Systems Manager access without opening SSH to the world.
@@ -91,6 +91,11 @@ Every EC2 instance in the stack — regardless of tier — is provisioned with t
     Root block devices use the `gp3` volume type with `encrypted = true` and a
     default size of 20 GB. Encryption is applied at rest using AWS-managed keys,
     protecting data if a volume snapshot is ever exposed.
+  </Card>
+  <Card title="User Data Replace on Change" icon="arrows-rotate">
+    `user_data_replace_on_change = true` ensures that whenever the user-data
+    script is modified, Terraform destroys and recreates the instance rather
+    than leaving a running instance with stale bootstrap configuration.
   </Card>
 </CardGroup>
 

@@ -1,7 +1,7 @@
 ---
-title: "VPC Networking Design for MEAN Stack on AWS"
+title: "MEAN Stack on AWS: VPC and Subnet Networking Design"
 sidebarTitle: "Networking"
-description: "How the VPC, subnets, Internet Gateway, NAT Gateway, and route tables are structured to provide public app access and private database isolation."
+description: "VPC layout, subnets, Internet Gateway, NAT Gateway, and route tables providing public application access and private database isolation on AWS."
 ---
 
 The networking layer is the foundation of this architecture's security and availability story. A single VPC encapsulates all resources, with public subnets spread across two Availability Zones to host the application tier and a private subnet in the first AZ to isolate MongoDB from the internet. Terraform's network module provisions every resource — VPC, subnets, gateways, and route tables — as a cohesive unit, and all resource names are derived from a configurable `project_name` variable to avoid collisions across environments.

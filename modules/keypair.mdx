@@ -1,10 +1,10 @@
 ---
-title: "keypair Module: Auto-Generated SSH Key Pair"
+title: "keypair Module: Auto-Generated SSH Key Pair for EC2"
 sidebarTitle: "keypair"
-description: "The keypair module generates an RSA 4096-bit key pair using the TLS provider, saves the private key locally as a .pem file, and registers the public key with AWS."
+description: "Generates an RSA 4096-bit SSH key using the TLS provider, saves the private key as a .pem file at keys/, and registers it with AWS EC2."
 ---
 
-The `keypair` module removes the manual step of generating an SSH key pair before running `terraform apply`. On the first apply, Terraform uses the `hashicorp/tls` provider to generate a 4096-bit RSA key entirely in memory, writes the private key to `keys/<project_name>.pem` with restrictive `0400` permissions, and uploads the corresponding public key to AWS as a named Key Pair. The resulting key pair name is passed to all three EC2 instances so they are immediately accessible over SSH without any out-of-band setup.
+The `keypair` module removes the manual step of generating an SSH key pair before running `terraform apply`. On the first apply, Terraform uses the `hashicorp/tls` provider to generate a 4096-bit RSA key entirely in memory, writes the private key to `${path.root}/keys/<project_name>.pem` with restrictive `0400` permissions, and uploads the corresponding public key to AWS as a named Key Pair. The resulting key pair name is passed to all three EC2 instances so they are immediately accessible over SSH without any out-of-band setup.
 
 ## How It Works
 
@@ -36,7 +36,7 @@ resource "aws_key_pair" "this" {
 
 ## Key File Location
 
-The private key is written to `keys/<project_name>.pem` relative to the Terraform root module directory. For example, with `project_name = "terraform-mean"` the file is saved at:
+The private key is written to `${path.root}/keys/<project_name>.pem` relative to the Terraform root module directory. For example, with `project_name = "terraform-mean"` the file is saved at:
 
 ```
 keys/terraform-mean.pem

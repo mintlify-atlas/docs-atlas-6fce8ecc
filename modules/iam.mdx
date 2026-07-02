@@ -1,7 +1,7 @@
 ---
-title: "iam Module: EC2 Role and Instance Profile"
+title: "iam Module: IAM EC2 Role, Policy, and Instance Profile"
 sidebarTitle: "iam"
-description: "The iam module creates an IAM role with the AmazonSSMManagedInstanceCore policy, allowing EC2 instances to use AWS Systems Manager without opening SSH ports."
+description: "Creates an EC2 IAM role with AmazonSSMManagedInstanceCore, enabling SSM Session Manager access to all instances without open SSH ports."
 ---
 
 The `iam` module provisions the IAM resources required for AWS Systems Manager (SSM) access across all three EC2 instances — both public Node.js servers and the private MongoDB instance. By attaching the `AmazonSSMManagedInstanceCore` managed policy, every instance can register with the SSM service at boot, eliminating the need for a bastion host or open SSH ports to reach the private MongoDB instance. The resulting instance profile is passed to the `ec2-instance` module, which attaches it to each instance at launch.
@@ -54,7 +54,7 @@ Attaching this managed policy grants the following capabilities to every EC2 ins
 ## Outputs
 
 <ResponseField name="instance_profile_name" type="string">
-  The name of the IAM instance profile. Consumed by the `ec2-instance` module via the `iam_instance_profile` variable in all three instance calls.
+  The name of the IAM instance profile. Defined inline in `main.tf` and consumed by the `ec2-instance` module via the `iam_instance_profile` variable in all three instance calls.
 </ResponseField>
 
 ## Module Call

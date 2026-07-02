@@ -1,7 +1,7 @@
 ---
-title: "network Module: VPC, Subnets, and Gateways"
+title: "network Module: VPC, Subnets, Gateways, and Routes"
 sidebarTitle: "network"
-description: "The network module creates the VPC, two public subnets, one private subnet, Internet Gateway, NAT Gateway, Elastic IP, and route tables for the MEAN stack."
+description: "Creates the VPC, two public subnets across two AZs, one private subnet, Internet Gateway, NAT Gateway, Elastic IP, and all route tables."
 ---
 
 The `network` module is the foundational layer of the MEAN stack infrastructure. It provisions the entire AWS networking topology — a single VPC with DNS resolution and hostnames enabled, two public-facing subnets spread across two Availability Zones for high availability, one private subnet for the MongoDB instance, an Internet Gateway for public egress and ingress, a NAT Gateway so the private subnet can reach the internet without being reachable from it, and all associated route tables and their subnet associations.

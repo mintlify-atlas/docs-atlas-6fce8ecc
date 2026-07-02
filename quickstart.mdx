@@ -1,5 +1,5 @@
 ---
-title: "Get Started with Terraform AWS MEAN Stack"
+title: "Quickstart: Deploy the Terraform AWS MEAN Stack on AWS"
 sidebarTitle: "Quickstart"
 description: "Clone the repo, configure your AWS credentials and variables, then run terraform apply to deploy a full MEAN stack on AWS in under 5 minutes."
 ---
@@ -198,8 +198,11 @@ terraform output
 
 | Output | Description |
 |---|---|
+| `vpc_id` | ID of the provisioned VPC |
 | `node_1_public_ip` | Public IP address of the first Node.js application server (AZ 1) |
+| `node_1_private_ip` | Private IP address of the first Node.js application server (AZ 1) |
 | `node_2_public_ip` | Public IP address of the second Node.js application server (AZ 2) |
+| `node_2_private_ip` | Private IP address of the second Node.js application server (AZ 2) |
 | `mongodb_private_ip` | Private IP of the MongoDB instance (accessible from app nodes only) |
 | `alb_dns_name` | DNS name of the Application Load Balancer — use this as your app URL |
 | `nat_gateway_public_ip` | Elastic IP assigned to the NAT Gateway (outbound traffic from private subnet) |
@@ -207,26 +210,22 @@ terraform output
 
 You can query any individual output by name:
 
-<CodeGroup>
-
-```bash ALB DNS
+```bash
+# ALB DNS name
 terraform output alb_dns_name
-```
 
-```bash Node IPs
+# Node public and private IPs
 terraform output node_1_public_ip
+terraform output node_1_private_ip
 terraform output node_2_public_ip
-```
+terraform output node_2_private_ip
 
-```bash MongoDB Private IP
+# MongoDB private IP
 terraform output mongodb_private_ip
-```
 
-```bash SSH Key Path
+# SSH key path
 terraform output private_key_path
 ```
-
-</CodeGroup>
 
 ---
 

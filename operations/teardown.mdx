@@ -24,7 +24,7 @@ Running `terraform destroy` removes every AWS resource that Terraform created fo
   </Step>
 
   <Step title="Back up the SSH key">
-    The local `keys/<project_name>.pem` file is **not** destroyed by Terraform, but the corresponding AWS Key Pair resource is. If you plan to re-use the same key name in a future deployment, copy the `.pem` file to a safe location now:
+    The `keys/<project_name>.pem` file is written by a `local_file` Terraform resource, which means `terraform destroy` **will delete it from disk**. Back it up to a safe location before running destroy:
 
     ```bash
     cp keys/terraform-mean.pem ~/secure-backups/terraform-mean.pem
@@ -70,6 +70,7 @@ All resources managed by this Terraform project are removed, including:
     - EC2 instance: `node-2`
     - EC2 instance: `mongodb`
     - AWS Key Pair (`<project_name>-key`)
+    - Local `keys/<project_name>.pem` file
   </Card>
   <Card title="Load Balancer" icon="shuffle">
     - Application Load Balancer
@@ -99,8 +100,10 @@ All resources managed by this Terraform project are removed, including:
 | Resource | Reason |
 |---|---|
 | S3 state bucket | Created outside this project; not in Terraform state |
-| `keys/<project_name>.pem` | Local file resource; Terraform removes it from state but leaves it on disk |
-| MongoDB data | Stored on EC2 instance storage — deleted with the instance, not recoverable |
+
+<Warning>
+Any MongoDB data stored on the instances is permanently lost when `terraform destroy` runs — EBS root volumes are deleted with their EC2 instances and are not recoverable. Export your data with `mongodump` before proceeding.
+</Warning>
 
 ## Partial Destroy
 
